@@ -117,6 +117,11 @@ textarea {
   margin-top: 12px;
 }
 
+.hero-buttons {
+  display: flex;
+  gap: 12px;
+}
+
 .grid {
   display: grid;
   gap: 16px;
@@ -210,6 +215,22 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
+}
+
+.pair-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 14px;
+}
+
+.pair-card h2 {
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.pair-footer {
+  margin-top: 12px;
 }
 
 .tabs {
@@ -356,5 +377,14 @@ textarea {
   .hero-actions {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .hero-buttons {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pair-grid {
+    grid-template-columns: 1fr;
   }
 }

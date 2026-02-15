@@ -25,6 +25,12 @@ type ImportantDate = {
   note: string;
 };
 
+type Couple = {
+  id: string;
+  name: string;
+  inviteCode: string;
+};
+
 type ImportantDateRow = {
   id: string;
   name: string;
@@ -40,8 +46,19 @@ type FavoriteItemRow = {
   details: string | null;
 };
 
-type UserNotesRow = {
+type CoupleNotesRow = {
   notes: string | null;
+};
+
+type CoupleRow = {
+  id: string;
+  name: string;
+  invite_code: string;
+};
+
+type CoupleMembershipRow = {
+  couple_id: string;
+  couples: CoupleRow | CoupleRow[] | null;
 };
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -98,12 +115,13 @@ function emptyFavorites(): Record<FavoriteCategory, FavoriteEntry[]> {
   };
 }
 
-function starterDateRows(userId: string) {
+function starterDateRows(userId: string, coupleId: string) {
   const year = new Date().getFullYear();
 
   return [
     {
       user_id: userId,
+      couple_id: coupleId,
       name: "Valentine's Day",
       event_date: `${year}-02-14`,
       recurring: true,
@@ -111,6 +129,7 @@ function starterDateRows(userId: string) {
     },
     {
       user_id: userId,
+      couple_id: coupleId,
       name: "Christmas",
       event_date: `${year}-12-25`,
       recurring: true,
@@ -202,9 +221,53 @@ function distanceLabel(distance: number) {
   return `${Math.abs(distance)} days ago`;
 }
 
+function normalizeCouple(membership: CoupleMembershipRow | null): Couple | null {
+  if (!membership || !membership.couples) {
+    return null;
+  }
+
+  const raw = Array.isArray(membership.couples)
+    ? membership.couples[0]
+    : membership.couples;
+
+  if (!raw) {
+    return null;
+  }
+
+  return {
+    id: raw.id,
+    name: raw.name,
+    inviteCode: raw.invite_code,
+  };
+}
+
+function parseSupabaseError(error: unknown, fallback: string) {
+  if (typeof error === "object" && error && "message" in error) {
+    const message = String((error as { message?: unknown }).message ?? "").trim();
+    if (message) {
+      return message;
+    }
+  }
+
+  return fallback;
+}
+
+function isNoRowsError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const code = "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+  const details =
+    "details" in error ? String((error as { details?: unknown }).details ?? "") : "";
+
+  return code === "PGRST116" || details.toLowerCase().includes("0 rows");
+}
+
 export default function Home() {
   const [isBooting, setIsBooting] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
+  const [couple, setCouple] = useState<Couple | null>(null);
 
   const [importantDates, setImportantDates] = useState<ImportantDate[]>([]);
   const [favorites, setFavorites] = useState<Record<FavoriteCategory, FavoriteEntry[]>>(
@@ -232,9 +295,14 @@ export default function Home() {
   const [dataBusy, setDataBusy] = useState(false);
   const [dataMessage, setDataMessage] = useState("");
 
+  const [pairName, setPairName] = useState("");
+  const [joinCode, setJoinCode] = useState("");
+  const [pairBusy, setPairBusy] = useState(false);
+  const [pairMessage, setPairMessage] = useState("");
+
   const currentCategoryEntries = favorites[activeCategory];
 
-  const loadUserData = useCallback(async (userId: string) => {
+  const loadCoupleData = useCallback(async (coupleId: string) => {
     if (!supabase) {
       return;
     }
@@ -246,16 +314,16 @@ export default function Home() {
       supabase
         .from("important_dates")
         .select("id,name,event_date,recurring,note")
-        .eq("user_id", userId),
+        .eq("couple_id", coupleId),
       supabase
         .from("favorite_items")
         .select("id,category,name,details")
-        .eq("user_id", userId),
+        .eq("couple_id", coupleId),
       supabase
-        .from("user_notes")
+        .from("couple_notes")
         .select("notes")
-        .eq("user_id", userId)
-        .maybeSingle<UserNotesRow>(),
+        .eq("couple_id", coupleId)
+        .maybeSingle<CoupleNotesRow>(),
     ]);
 
     if (datesRes.error || favoritesRes.error || notesRes.error) {
@@ -285,6 +353,42 @@ export default function Home() {
     setDataBusy(false);
   }, []);
 
+  const loadCoupleForUser = useCallback(
+    async (userId: string) => {
+      if (!supabase) {
+        return;
+      }
+
+      const membershipRes = await supabase
+        .from("couple_members")
+        .select("couple_id,couples!inner(id,name,invite_code)")
+        .eq("user_id", userId)
+        .maybeSingle<CoupleMembershipRow>();
+
+      if (membershipRes.error && !isNoRowsError(membershipRes.error)) {
+        setPairMessage(parseSupabaseError(membershipRes.error, "Could not load couple."));
+        setCouple(null);
+        setImportantDates([]);
+        setFavorites(emptyFavorites());
+        setNotes("");
+        return;
+      }
+
+      const normalizedCouple = normalizeCouple(membershipRes.data ?? null);
+      setCouple(normalizedCouple);
+
+      if (!normalizedCouple) {
+        setImportantDates([]);
+        setFavorites(emptyFavorites());
+        setNotes("");
+        return;
+      }
+
+      await loadCoupleData(normalizedCouple.id);
+    },
+    [loadCoupleData],
+  );
+
   useEffect(() => {
     if (!supabase) {
       queueMicrotask(() => {
@@ -309,7 +413,7 @@ export default function Home() {
       setSession(currentSession);
 
       if (currentSession?.user) {
-        await loadUserData(currentSession.user.id);
+        await loadCoupleForUser(currentSession.user.id);
       }
 
       setIsBooting(false);
@@ -326,12 +430,14 @@ export default function Home() {
 
       setSession(nextSession);
       setAuthMessage("");
+      setPairMessage("");
 
       if (nextSession?.user) {
-        void loadUserData(nextSession.user.id);
+        void loadCoupleForUser(nextSession.user.id);
         return;
       }
 
+      setCouple(null);
       setImportantDates([]);
       setFavorites(emptyFavorites());
       setNotes("");
@@ -342,7 +448,7 @@ export default function Home() {
       cancelled = true;
       subscription.unsubscribe();
     };
-  }, [loadUserData]);
+  }, [loadCoupleForUser]);
 
   const sortedDates = useMemo(() => {
     return [...importantDates].sort((a, b) => {
@@ -403,13 +509,147 @@ export default function Home() {
     }
 
     setDataMessage("");
+    setPairMessage("");
     await supabase.auth.signOut();
+  };
+
+  const createPair = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!supabase || !session?.user) {
+      return;
+    }
+
+    const trimmedName = pairName.trim();
+    if (!trimmedName) {
+      setPairMessage("Give your shared dashboard a name.");
+      return;
+    }
+
+    setPairBusy(true);
+    setPairMessage("");
+
+    const createdRes = await supabase
+      .from("couples")
+      .insert({
+        name: trimmedName,
+        created_by: session.user.id,
+      })
+      .select("id,name,invite_code")
+      .single<CoupleRow>();
+
+    if (createdRes.error) {
+      setPairMessage(parseSupabaseError(createdRes.error, "Could not create couple."));
+      setPairBusy(false);
+      return;
+    }
+
+    const joinRes = await supabase.from("couple_members").insert({
+      couple_id: createdRes.data.id,
+      user_id: session.user.id,
+    });
+
+    if (joinRes.error) {
+      setPairMessage(parseSupabaseError(joinRes.error, "Could not join couple."));
+      setPairBusy(false);
+      return;
+    }
+
+    const seededRes = await supabase
+      .from("important_dates")
+      .insert(starterDateRows(session.user.id, createdRes.data.id))
+      .select("id,name,event_date,recurring,note");
+
+    if (seededRes.error) {
+      setPairMessage(parseSupabaseError(seededRes.error, "Created, but failed to seed dates."));
+    }
+
+    const freshCouple: Couple = {
+      id: createdRes.data.id,
+      name: createdRes.data.name,
+      inviteCode: createdRes.data.invite_code,
+    };
+
+    setCouple(freshCouple);
+    setImportantDates((seededRes.data ?? []).map((row) => mapDateRow(row as ImportantDateRow)));
+    setFavorites(emptyFavorites());
+    setNotes("");
+    setPairName("");
+    setJoinCode("");
+    setPairMessage(`Couple created. Share this code: ${freshCouple.inviteCode}`);
+    setPairBusy(false);
+  };
+
+  const joinPair = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!supabase || !session?.user) {
+      return;
+    }
+
+    const code = joinCode.trim().toUpperCase();
+    if (!code) {
+      setPairMessage("Enter the invite code.");
+      return;
+    }
+
+    setPairBusy(true);
+    setPairMessage("");
+
+    const coupleRes = await supabase
+      .from("couples")
+      .select("id,name,invite_code")
+      .eq("invite_code", code)
+      .single<CoupleRow>();
+
+    if (coupleRes.error) {
+      setPairMessage(parseSupabaseError(coupleRes.error, "Invite code not found."));
+      setPairBusy(false);
+      return;
+    }
+
+    const joinRes = await supabase.from("couple_members").insert({
+      couple_id: coupleRes.data.id,
+      user_id: session.user.id,
+    });
+
+    if (joinRes.error) {
+      setPairMessage(parseSupabaseError(joinRes.error, "Could not join couple."));
+      setPairBusy(false);
+      return;
+    }
+
+    const linkedCouple: Couple = {
+      id: coupleRes.data.id,
+      name: coupleRes.data.name,
+      inviteCode: coupleRes.data.invite_code,
+    };
+
+    setCouple(linkedCouple);
+    await loadCoupleData(linkedCouple.id);
+    setPairName("");
+    setJoinCode("");
+    setPairMessage(`Joined ${linkedCouple.name}.`);
+    setPairBusy(false);
+  };
+
+  const copyInviteCode = async () => {
+    if (!couple?.inviteCode || typeof navigator === "undefined" || !navigator.clipboard) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(couple.inviteCode);
+      setDataMessage("Invite code copied.");
+    } catch {
+      setDataMessage("Could not copy invite code.");
+    }
   };
 
   const addDate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!supabase || !session?.user) {
+    if (!supabase || !session?.user || !couple) {
       return;
     }
 
@@ -424,6 +664,7 @@ export default function Home() {
       .from("important_dates")
       .insert({
         user_id: session.user.id,
+        couple_id: couple.id,
         name,
         event_date: dateValue,
         recurring: dateRecurring,
@@ -445,7 +686,7 @@ export default function Home() {
   };
 
   const removeDate = async (id: string) => {
-    if (!supabase || !session?.user) {
+    if (!supabase || !couple) {
       return;
     }
 
@@ -455,7 +696,7 @@ export default function Home() {
       .from("important_dates")
       .delete()
       .eq("id", id)
-      .eq("user_id", session.user.id);
+      .eq("couple_id", couple.id);
 
     if (error) {
       setDataMessage(error.message);
@@ -468,7 +709,7 @@ export default function Home() {
   const addFavorite = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!supabase || !session?.user) {
+    if (!supabase || !session?.user || !couple) {
       return;
     }
 
@@ -483,6 +724,7 @@ export default function Home() {
       .from("favorite_items")
       .insert({
         user_id: session.user.id,
+        couple_id: couple.id,
         category: activeCategory,
         name,
         details: favoriteDetails.trim(),
@@ -507,7 +749,7 @@ export default function Home() {
   };
 
   const removeFavorite = async (category: FavoriteCategory, id: string) => {
-    if (!supabase || !session?.user) {
+    if (!supabase || !couple) {
       return;
     }
 
@@ -517,7 +759,7 @@ export default function Home() {
       .from("favorite_items")
       .delete()
       .eq("id", id)
-      .eq("user_id", session.user.id);
+      .eq("couple_id", couple.id);
 
     if (error) {
       setDataMessage(error.message);
@@ -531,19 +773,19 @@ export default function Home() {
   };
 
   const saveNotes = async () => {
-    if (!supabase || !session?.user) {
+    if (!supabase || !couple) {
       return;
     }
 
     setDataMessage("");
 
-    const { error } = await supabase.from("user_notes").upsert(
+    const { error } = await supabase.from("couple_notes").upsert(
       {
-        user_id: session.user.id,
+        couple_id: couple.id,
         notes,
       },
       {
-        onConflict: "user_id",
+        onConflict: "couple_id",
       },
     );
 
@@ -556,19 +798,17 @@ export default function Home() {
   };
 
   const resetToTemplate = async () => {
-    if (!supabase || !session?.user) {
+    if (!supabase || !session?.user || !couple) {
       return;
     }
 
     setDataBusy(true);
     setDataMessage("");
 
-    const userId = session.user.id;
-
     const [delDates, delFavorites, delNotes] = await Promise.all([
-      supabase.from("important_dates").delete().eq("user_id", userId),
-      supabase.from("favorite_items").delete().eq("user_id", userId),
-      supabase.from("user_notes").delete().eq("user_id", userId),
+      supabase.from("important_dates").delete().eq("couple_id", couple.id),
+      supabase.from("favorite_items").delete().eq("couple_id", couple.id),
+      supabase.from("couple_notes").delete().eq("couple_id", couple.id),
     ]);
 
     if (delDates.error || delFavorites.error || delNotes.error) {
@@ -584,7 +824,7 @@ export default function Home() {
 
     const { data, error } = await supabase
       .from("important_dates")
-      .insert(starterDateRows(userId))
+      .insert(starterDateRows(session.user.id, couple.id))
       .select("id,name,event_date,recurring,note");
 
     if (error) {
@@ -606,7 +846,7 @@ export default function Home() {
           <h1>Supabase env is missing</h1>
           <p>
             Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in
-            `.env.local`.
+            Vercel environment variables.
           </p>
         </section>
       </main>
@@ -632,7 +872,7 @@ export default function Home() {
         <section className="panel auth-panel">
           <p className="tag">Private Love Database</p>
           <h1>Sign in</h1>
-          <p>Each user gets their own private favorites space.</p>
+          <p>Each person signs in. Then both join the same shared couple space.</p>
 
           <form className="form" onSubmit={handleAuth}>
             <label>
@@ -689,6 +929,65 @@ export default function Home() {
     );
   }
 
+  if (!couple) {
+    return (
+      <main className="shell">
+        <div className="bg-overlay" aria-hidden="true" />
+
+        <section className="panel auth-panel">
+          <p className="tag">Pair setup</p>
+          <h1>Create or join your shared space</h1>
+          <p>
+            One person creates a couple dashboard, then shares the invite code so
+            the other person can join.
+          </p>
+
+          <div className="pair-grid">
+            <form className="form card pair-card" onSubmit={createPair}>
+              <h2>Create</h2>
+              <label>
+                Couple Name
+                <input
+                  value={pairName}
+                  onChange={(event) => setPairName(event.target.value)}
+                  placeholder="Us"
+                />
+              </label>
+
+              <button className="btn" type="submit" disabled={pairBusy}>
+                Create shared dashboard
+              </button>
+            </form>
+
+            <form className="form card pair-card" onSubmit={joinPair}>
+              <h2>Join</h2>
+              <label>
+                Invite Code
+                <input
+                  value={joinCode}
+                  onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
+                  placeholder="AB12CD34"
+                />
+              </label>
+
+              <button className="btn" type="submit" disabled={pairBusy}>
+                Join with code
+              </button>
+            </form>
+          </div>
+
+          <div className="pair-footer">
+            <button className="link-btn" type="button" onClick={signOut}>
+              Sign out
+            </button>
+          </div>
+
+          {pairMessage && <p className="message">{pairMessage}</p>}
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="shell">
       <div className="bg-overlay" aria-hidden="true" />
@@ -702,10 +1001,17 @@ export default function Home() {
             the tiny details that matter.
           </p>
           <div className="hero-actions">
-            <p className="status">Signed in as {session.user.email}</p>
-            <button className="link-btn" type="button" onClick={signOut}>
-              Sign out
-            </button>
+            <p className="status">
+              Space: {couple.name} · Code: <strong>{couple.inviteCode}</strong>
+            </p>
+            <div className="hero-buttons">
+              <button className="link-btn" type="button" onClick={copyInviteCode}>
+                Copy code
+              </button>
+              <button className="link-btn" type="button" onClick={signOut}>
+                Sign out
+              </button>
+            </div>
           </div>
         </header>
 
@@ -857,13 +1163,13 @@ export default function Home() {
         </div>
 
         <article className="card full">
-          <h2>Personal Notes</h2>
-          <p className="help">Anything she says once and you never want to forget.</p>
+          <h2>Shared Notes</h2>
+          <p className="help">Anything either of you says once and never wants to repeat.</p>
           <textarea
             rows={4}
             value={notes}
             onChange={(event) => setNotes(event.target.value)}
-            placeholder="Sizes, favorite brands, places she wants to go, flowers she does not like..."
+            placeholder="Sizes, favorite brands, places to go, flowers she does not like..."
           />
           <div className="notes-actions">
             <button className="btn" type="button" onClick={saveNotes} disabled={dataBusy}>

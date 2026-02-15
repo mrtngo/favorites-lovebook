@@ -7,9 +7,10 @@ A separate app for saving personal preferences and important reminders:
 - Favorite destinations
 - Favorite flowers
 - Date ideas and little things
-- Free-form notes
+- Shared notes
+- Couple sharing (create a shared space and join by invite code)
 
-All data is stored per-user in Supabase (Auth + Postgres + RLS).
+All data is stored in Supabase (Auth + Postgres + RLS), scoped to a shared couple space.
 
 ## Run locally
 
