@@ -70,6 +70,10 @@ textarea {
   width: min(100%, 1080px);
 }
 
+.auth-panel {
+  max-width: 560px;
+}
+
 .hero {
   border-bottom: 1px solid rgba(255, 255, 255, 0.13);
   margin-bottom: 20px;
@@ -103,6 +107,14 @@ textarea {
   color: var(--accent);
   font-size: 0.9rem;
   font-weight: 700;
+}
+
+.hero-actions {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-top: 12px;
 }
 
 .grid {
@@ -188,11 +200,27 @@ textarea {
   filter: brightness(1.03);
 }
 
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.auth-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
 .tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 14px;
+}
+
+.notes-actions {
+  margin-top: 10px;
 }
 
 .tab {
@@ -290,6 +318,12 @@ textarea {
   margin-top: 14px;
 }
 
+.message {
+  color: var(--accent);
+  font-size: 0.92rem;
+  margin-top: 14px;
+}
+
 @media (max-width: 920px) {
   .grid {
     grid-template-columns: 1fr;
@@ -315,6 +349,11 @@ textarea {
   }
 
   .footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .hero-actions {
     align-items: flex-start;
     flex-direction: column;
   }

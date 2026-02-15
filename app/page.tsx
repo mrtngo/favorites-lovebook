@@ -1,6 +1,7 @@
 "use client";
 
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { createClient, type Session } from "@supabase/supabase-js";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 type FavoriteCategory =
   | "gifts"
@@ -13,6 +14,7 @@ type FavoriteEntry = {
   id: string;
   name: string;
   details: string;
+  category: FavoriteCategory;
 };
 
 type ImportantDate = {
@@ -23,13 +25,32 @@ type ImportantDate = {
   note: string;
 };
 
-type StoredData = {
-  importantDates: ImportantDate[];
-  favorites: Record<FavoriteCategory, FavoriteEntry[]>;
-  notes: string;
+type ImportantDateRow = {
+  id: string;
+  name: string;
+  event_date: string;
+  recurring: boolean;
+  note: string | null;
 };
 
-const STORAGE_KEY = "favorites-lovebook-v1";
+type FavoriteItemRow = {
+  id: string;
+  category: FavoriteCategory;
+  name: string;
+  details: string | null;
+};
+
+type UserNotesRow = {
+  notes: string | null;
+};
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+const supabase =
+  SUPABASE_URL && SUPABASE_ANON_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
 
 const categoryMeta: Array<{ key: FavoriteCategory; label: string; hint: string }> = [
   {
@@ -67,14 +88,6 @@ const categoryLabel: Record<FavoriteCategory, string> = {
   littleThings: "Little Things",
 };
 
-function createId() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 function emptyFavorites(): Record<FavoriteCategory, FavoriteEntry[]> {
   return {
     gifts: [],
@@ -85,25 +98,44 @@ function emptyFavorites(): Record<FavoriteCategory, FavoriteEntry[]> {
   };
 }
 
-function starterDates(): ImportantDate[] {
+function starterDateRows(userId: string) {
   const year = new Date().getFullYear();
 
   return [
     {
-      id: createId(),
+      user_id: userId,
       name: "Valentine's Day",
-      date: `${year}-02-14`,
+      event_date: `${year}-02-14`,
       recurring: true,
       note: "",
     },
     {
-      id: createId(),
+      user_id: userId,
       name: "Christmas",
-      date: `${year}-12-25`,
+      event_date: `${year}-12-25`,
       recurring: true,
       note: "",
     },
   ];
+}
+
+function mapDateRow(row: ImportantDateRow): ImportantDate {
+  return {
+    id: row.id,
+    name: row.name,
+    date: row.event_date,
+    recurring: row.recurring,
+    note: row.note ?? "",
+  };
+}
+
+function mapFavoriteRow(row: FavoriteItemRow): FavoriteEntry {
+  return {
+    id: row.id,
+    category: row.category,
+    name: row.name,
+    details: row.details ?? "",
+  };
 }
 
 function toNoon(date: Date) {
@@ -171,7 +203,8 @@ function distanceLabel(distance: number) {
 }
 
 export default function Home() {
-  const [isLoaded, setIsLoaded] = useState(false);
+  const [isBooting, setIsBooting] = useState(true);
+  const [session, setSession] = useState<Session | null>(null);
 
   const [importantDates, setImportantDates] = useState<ImportantDate[]>([]);
   const [favorites, setFavorites] = useState<Record<FavoriteCategory, FavoriteEntry[]>>(
@@ -189,53 +222,127 @@ export default function Home() {
   const [favoriteName, setFavoriteName] = useState("");
   const [favoriteDetails, setFavoriteDetails] = useState("");
 
-  useEffect(() => {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    let loadedDates = starterDates();
-    let loadedFavorites = emptyFavorites();
-    let loadedNotes = "";
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
 
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw) as StoredData;
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
 
-        if (Array.isArray(parsed.importantDates)) {
-          loadedDates = parsed.importantDates;
-        }
+  const [dataBusy, setDataBusy] = useState(false);
+  const [dataMessage, setDataMessage] = useState("");
 
-        if (parsed.favorites) {
-          loadedFavorites = { ...emptyFavorites(), ...parsed.favorites };
-        }
+  const currentCategoryEntries = favorites[activeCategory];
 
-        if (typeof parsed.notes === "string") {
-          loadedNotes = parsed.notes;
-        }
-      } catch {
-        loadedDates = starterDates();
-      }
-    }
-
-    queueMicrotask(() => {
-      setImportantDates(loadedDates);
-      setFavorites(loadedFavorites);
-      setNotes(loadedNotes);
-      setIsLoaded(true);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!isLoaded) {
+  const loadUserData = useCallback(async (userId: string) => {
+    if (!supabase) {
       return;
     }
 
-    const payload: StoredData = {
-      importantDates,
-      favorites,
-      notes,
+    setDataBusy(true);
+    setDataMessage("");
+
+    const [datesRes, favoritesRes, notesRes] = await Promise.all([
+      supabase
+        .from("important_dates")
+        .select("id,name,event_date,recurring,note")
+        .eq("user_id", userId),
+      supabase
+        .from("favorite_items")
+        .select("id,category,name,details")
+        .eq("user_id", userId),
+      supabase
+        .from("user_notes")
+        .select("notes")
+        .eq("user_id", userId)
+        .maybeSingle<UserNotesRow>(),
+    ]);
+
+    if (datesRes.error || favoritesRes.error || notesRes.error) {
+      setDataMessage(
+        datesRes.error?.message ??
+          favoritesRes.error?.message ??
+          notesRes.error?.message ??
+          "Could not load data.",
+      );
+      setDataBusy(false);
+      return;
+    }
+
+    const mappedDates = (datesRes.data ?? []).map((row) =>
+      mapDateRow(row as ImportantDateRow),
+    );
+
+    const mappedFavorites = emptyFavorites();
+    for (const row of favoritesRes.data ?? []) {
+      const mapped = mapFavoriteRow(row as FavoriteItemRow);
+      mappedFavorites[mapped.category].push(mapped);
+    }
+
+    setImportantDates(mappedDates);
+    setFavorites(mappedFavorites);
+    setNotes(notesRes.data?.notes ?? "");
+    setDataBusy(false);
+  }, []);
+
+  useEffect(() => {
+    if (!supabase) {
+      queueMicrotask(() => {
+        setIsBooting(false);
+      });
+      return;
+    }
+
+    let cancelled = false;
+
+    const bootstrap = async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (cancelled) {
+        return;
+      }
+
+      if (error) {
+        setAuthMessage(error.message);
+      }
+
+      const currentSession = data.session;
+      setSession(currentSession);
+
+      if (currentSession?.user) {
+        await loadUserData(currentSession.user.id);
+      }
+
+      setIsBooting(false);
     };
 
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [importantDates, favorites, notes, isLoaded]);
+    void bootstrap();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (cancelled) {
+        return;
+      }
+
+      setSession(nextSession);
+      setAuthMessage("");
+
+      if (nextSession?.user) {
+        void loadUserData(nextSession.user.id);
+        return;
+      }
+
+      setImportantDates([]);
+      setFavorites(emptyFavorites());
+      setNotes("");
+      setDataBusy(false);
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, [loadUserData]);
 
   const sortedDates = useMemo(() => {
     return [...importantDates].sort((a, b) => {
@@ -243,70 +350,344 @@ export default function Home() {
     });
   }, [importantDates]);
 
-  const currentCategoryEntries = favorites[activeCategory];
-
-  const addDate = (event: FormEvent<HTMLFormElement>) => {
+  const handleAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (!supabase) {
+      return;
+    }
+
+    const email = authEmail.trim();
+    const password = authPassword;
+
+    if (!email || !password) {
+      setAuthMessage("Email and password are required.");
+      return;
+    }
+
+    setAuthBusy(true);
+    setAuthMessage("");
+
+    if (authMode === "signin") {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+      if (error) {
+        setAuthMessage(error.message);
+      }
+
+      setAuthBusy(false);
+      return;
+    }
+
+    const { data, error } = await supabase.auth.signUp({ email, password });
+
+    if (error) {
+      setAuthMessage(error.message);
+      setAuthBusy(false);
+      return;
+    }
+
+    if (!data.session) {
+      setAuthMessage("Account created. Check your email, then sign in.");
+    } else {
+      setAuthMessage("Account created and signed in.");
+    }
+
+    setAuthMode("signin");
+    setAuthBusy(false);
+  };
+
+  const signOut = async () => {
+    if (!supabase) {
+      return;
+    }
+
+    setDataMessage("");
+    await supabase.auth.signOut();
+  };
+
+  const addDate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!supabase || !session?.user) {
+      return;
+    }
 
     const name = dateName.trim();
     if (!name || !dateValue) {
       return;
     }
 
-    const entry: ImportantDate = {
-      id: createId(),
-      name,
-      date: dateValue,
-      recurring: dateRecurring,
-      note: dateNote.trim(),
-    };
+    setDataMessage("");
 
-    setImportantDates((current) => [entry, ...current]);
+    const { data, error } = await supabase
+      .from("important_dates")
+      .insert({
+        user_id: session.user.id,
+        name,
+        event_date: dateValue,
+        recurring: dateRecurring,
+        note: dateNote.trim(),
+      })
+      .select("id,name,event_date,recurring,note")
+      .single<ImportantDateRow>();
+
+    if (error) {
+      setDataMessage(error.message);
+      return;
+    }
+
+    setImportantDates((current) => [mapDateRow(data), ...current]);
     setDateName("");
     setDateValue("");
     setDateRecurring(true);
     setDateNote("");
   };
 
-  const removeDate = (id: string) => {
+  const removeDate = async (id: string) => {
+    if (!supabase || !session?.user) {
+      return;
+    }
+
+    setDataMessage("");
+
+    const { error } = await supabase
+      .from("important_dates")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", session.user.id);
+
+    if (error) {
+      setDataMessage(error.message);
+      return;
+    }
+
     setImportantDates((current) => current.filter((entry) => entry.id !== id));
   };
 
-  const addFavorite = (event: FormEvent<HTMLFormElement>) => {
+  const addFavorite = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (!supabase || !session?.user) {
+      return;
+    }
 
     const name = favoriteName.trim();
     if (!name) {
       return;
     }
 
-    const entry: FavoriteEntry = {
-      id: createId(),
-      name,
-      details: favoriteDetails.trim(),
-    };
+    setDataMessage("");
+
+    const { data, error } = await supabase
+      .from("favorite_items")
+      .insert({
+        user_id: session.user.id,
+        category: activeCategory,
+        name,
+        details: favoriteDetails.trim(),
+      })
+      .select("id,category,name,details")
+      .single<FavoriteItemRow>();
+
+    if (error) {
+      setDataMessage(error.message);
+      return;
+    }
+
+    const mapped = mapFavoriteRow(data);
 
     setFavorites((current) => ({
       ...current,
-      [activeCategory]: [entry, ...current[activeCategory]],
+      [mapped.category]: [mapped, ...current[mapped.category]],
     }));
 
     setFavoriteName("");
     setFavoriteDetails("");
   };
 
-  const removeFavorite = (category: FavoriteCategory, id: string) => {
+  const removeFavorite = async (category: FavoriteCategory, id: string) => {
+    if (!supabase || !session?.user) {
+      return;
+    }
+
+    setDataMessage("");
+
+    const { error } = await supabase
+      .from("favorite_items")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", session.user.id);
+
+    if (error) {
+      setDataMessage(error.message);
+      return;
+    }
+
     setFavorites((current) => ({
       ...current,
       [category]: current[category].filter((entry) => entry.id !== id),
     }));
   };
 
-  const resetToTemplate = () => {
-    setImportantDates(starterDates());
+  const saveNotes = async () => {
+    if (!supabase || !session?.user) {
+      return;
+    }
+
+    setDataMessage("");
+
+    const { error } = await supabase.from("user_notes").upsert(
+      {
+        user_id: session.user.id,
+        notes,
+      },
+      {
+        onConflict: "user_id",
+      },
+    );
+
+    if (error) {
+      setDataMessage(error.message);
+      return;
+    }
+
+    setDataMessage("Notes saved.");
+  };
+
+  const resetToTemplate = async () => {
+    if (!supabase || !session?.user) {
+      return;
+    }
+
+    setDataBusy(true);
+    setDataMessage("");
+
+    const userId = session.user.id;
+
+    const [delDates, delFavorites, delNotes] = await Promise.all([
+      supabase.from("important_dates").delete().eq("user_id", userId),
+      supabase.from("favorite_items").delete().eq("user_id", userId),
+      supabase.from("user_notes").delete().eq("user_id", userId),
+    ]);
+
+    if (delDates.error || delFavorites.error || delNotes.error) {
+      setDataMessage(
+        delDates.error?.message ??
+          delFavorites.error?.message ??
+          delNotes.error?.message ??
+          "Could not reset data.",
+      );
+      setDataBusy(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("important_dates")
+      .insert(starterDateRows(userId))
+      .select("id,name,event_date,recurring,note");
+
+    if (error) {
+      setDataMessage(error.message);
+      setDataBusy(false);
+      return;
+    }
+
+    setImportantDates((data ?? []).map((row) => mapDateRow(row as ImportantDateRow)));
     setFavorites(emptyFavorites());
     setNotes("");
+    setDataBusy(false);
   };
+
+  if (!supabase) {
+    return (
+      <main className="shell">
+        <section className="panel auth-panel">
+          <h1>Supabase env is missing</h1>
+          <p>
+            Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in
+            `.env.local`.
+          </p>
+        </section>
+      </main>
+    );
+  }
+
+  if (isBooting) {
+    return (
+      <main className="shell">
+        <section className="panel auth-panel">
+          <h1>Loading...</h1>
+          <p>Checking session and syncing your data.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!session) {
+    return (
+      <main className="shell">
+        <div className="bg-overlay" aria-hidden="true" />
+
+        <section className="panel auth-panel">
+          <p className="tag">Private Love Database</p>
+          <h1>Sign in</h1>
+          <p>Each user gets their own private favorites space.</p>
+
+          <form className="form" onSubmit={handleAuth}>
+            <label>
+              Email
+              <input
+                type="email"
+                autoComplete="email"
+                value={authEmail}
+                onChange={(event) => setAuthEmail(event.target.value)}
+                placeholder="you@example.com"
+              />
+            </label>
+
+            <label>
+              Password
+              <input
+                type="password"
+                autoComplete={authMode === "signin" ? "current-password" : "new-password"}
+                value={authPassword}
+                onChange={(event) => setAuthPassword(event.target.value)}
+                placeholder="At least 6 characters"
+              />
+            </label>
+
+            <div className="auth-actions">
+              <button className="btn" type="submit" disabled={authBusy}>
+                {authBusy
+                  ? "Working..."
+                  : authMode === "signin"
+                    ? "Sign In"
+                    : "Create Account"}
+              </button>
+
+              <button
+                className="link-btn"
+                type="button"
+                onClick={() => {
+                  setAuthMessage("");
+                  setAuthMode((current) =>
+                    current === "signin" ? "signup" : "signin",
+                  );
+                }}
+              >
+                {authMode === "signin"
+                  ? "Need an account? Sign up"
+                  : "Already have one? Sign in"}
+              </button>
+            </div>
+          </form>
+
+          {authMessage && <p className="message">{authMessage}</p>}
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="shell">
@@ -320,7 +701,12 @@ export default function Home() {
             Keep track of favorite dates, gifts, flowers, destinations, and all
             the tiny details that matter.
           </p>
-          <p className="status">Auto-saved on this device.</p>
+          <div className="hero-actions">
+            <p className="status">Signed in as {session.user.email}</p>
+            <button className="link-btn" type="button" onClick={signOut}>
+              Sign out
+            </button>
+          </div>
         </header>
 
         <div className="grid">
@@ -366,7 +752,7 @@ export default function Home() {
                 />
               </label>
 
-              <button className="btn" type="submit">
+              <button className="btn" type="submit" disabled={dataBusy}>
                 Add Date
               </button>
             </form>
@@ -392,6 +778,7 @@ export default function Home() {
                       className="link-btn"
                       type="button"
                       onClick={() => removeDate(entry.id)}
+                      disabled={dataBusy}
                     >
                       Delete
                     </button>
@@ -438,7 +825,7 @@ export default function Home() {
                 />
               </label>
 
-              <button className="btn" type="submit">
+              <button className="btn" type="submit" disabled={dataBusy}>
                 Add {categoryLabel[activeCategory]}
               </button>
             </form>
@@ -459,6 +846,7 @@ export default function Home() {
                     className="link-btn"
                     type="button"
                     onClick={() => removeFavorite(activeCategory, entry.id)}
+                    disabled={dataBusy}
                   >
                     Delete
                   </button>
@@ -477,13 +865,24 @@ export default function Home() {
             onChange={(event) => setNotes(event.target.value)}
             placeholder="Sizes, favorite brands, places she wants to go, flowers she does not like..."
           />
+          <div className="notes-actions">
+            <button className="btn" type="button" onClick={saveNotes} disabled={dataBusy}>
+              Save Notes
+            </button>
+          </div>
         </article>
 
         <footer className="footer">
-          <button className="link-btn" type="button" onClick={resetToTemplate}>
+          <button
+            className="link-btn"
+            type="button"
+            onClick={resetToTemplate}
+            disabled={dataBusy}
+          >
             Reset to starter template
           </button>
-          {!isLoaded && <span>Loading saved data...</span>}
+          {dataBusy && <span>Syncing...</span>}
+          {dataMessage && <span>{dataMessage}</span>}
         </footer>
       </section>
     </main>
