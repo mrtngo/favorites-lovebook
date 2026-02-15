@@ -56,6 +56,12 @@ type CoupleRow = {
   invite_code: string;
 };
 
+type JoinCoupleRpcRow = {
+  couple_id: string;
+  couple_name: string;
+  invite_code: string;
+};
+
 type CoupleMembershipRow = {
   couple_id: string;
   couples: CoupleRow | CoupleRow[] | null;
@@ -596,33 +602,30 @@ export default function Home() {
     setPairBusy(true);
     setPairMessage("");
 
-    const coupleRes = await supabase
-      .from("couples")
-      .select("id,name,invite_code")
-      .eq("invite_code", code)
-      .single<CoupleRow>();
+    const joinRes = await supabase.rpc("join_couple_by_invite", {
+      invite: code,
+    });
 
-    if (coupleRes.error) {
-      setPairMessage(parseSupabaseError(coupleRes.error, "Invite code not found."));
+    if (joinRes.error) {
+      setPairMessage(parseSupabaseError(joinRes.error, "Could not join with that code."));
       setPairBusy(false);
       return;
     }
 
-    const joinRes = await supabase.from("couple_members").insert({
-      couple_id: coupleRes.data.id,
-      user_id: session.user.id,
-    });
+    const payload = Array.isArray(joinRes.data)
+      ? (joinRes.data[0] as JoinCoupleRpcRow | undefined)
+      : (joinRes.data as JoinCoupleRpcRow | null);
 
-    if (joinRes.error) {
-      setPairMessage(parseSupabaseError(joinRes.error, "Could not join couple."));
+    if (!payload) {
+      setPairMessage("Could not join with that code.");
       setPairBusy(false);
       return;
     }
 
     const linkedCouple: Couple = {
-      id: coupleRes.data.id,
-      name: coupleRes.data.name,
-      inviteCode: coupleRes.data.invite_code,
+      id: payload.couple_id,
+      name: payload.couple_name,
+      inviteCode: payload.invite_code,
     };
 
     setCouple(linkedCouple);
