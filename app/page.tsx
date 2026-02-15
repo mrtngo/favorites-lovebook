@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import { createClient, type Session } from "@supabase/supabase-js";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
@@ -8,12 +9,40 @@ type FavoriteCategory =
   | "destinations"
   | "flowers"
   | "dateIdeas"
-  | "littleThings";
+  | "littleThings"
+  | "movies"
+  | "tvShows"
+  | "songs"
+  | "youtubeVideos";
+
+type FavoriteSource =
+  | "manual"
+  | "imdb_movie"
+  | "imdb_tv"
+  | "spotify_track"
+  | "youtube_video";
+
+type SearchableCategory = "movies" | "tvShows" | "songs" | "youtubeVideos";
+
+type CatalogSearchItem = {
+  id: string;
+  title: string;
+  subtitle: string;
+  details: string;
+  imageUrl: string;
+  externalUrl: string;
+  source: FavoriteSource;
+};
 
 type FavoriteEntry = {
   id: string;
   name: string;
   details: string;
+  subtitle: string;
+  source: FavoriteSource;
+  externalId: string;
+  externalUrl: string;
+  imageUrl: string;
   category: FavoriteCategory;
 };
 
@@ -44,6 +73,11 @@ type FavoriteItemRow = {
   category: FavoriteCategory;
   name: string;
   details: string | null;
+  subtitle: string | null;
+  source: FavoriteSource | null;
+  external_id: string | null;
+  external_url: string | null;
+  image_url: string | null;
 };
 
 type UserNotesRow = {
@@ -105,6 +139,26 @@ const categoryMeta: Array<{ key: FavoriteCategory; label: string; hint: string }
     label: "Little Things",
     hint: "Snacks, songs, movies, random favorites...",
   },
+  {
+    key: "movies",
+    label: "Movies",
+    hint: "Search by movie title...",
+  },
+  {
+    key: "tvShows",
+    label: "TV Shows",
+    hint: "Search by TV show...",
+  },
+  {
+    key: "songs",
+    label: "Songs",
+    hint: "Search by song or artist...",
+  },
+  {
+    key: "youtubeVideos",
+    label: "YouTube Videos",
+    hint: "Search by video title or creator...",
+  },
 ];
 
 const categoryLabel: Record<FavoriteCategory, string> = {
@@ -113,6 +167,10 @@ const categoryLabel: Record<FavoriteCategory, string> = {
   flowers: "Flowers",
   dateIdeas: "Date Ideas",
   littleThings: "Little Things",
+  movies: "Movies",
+  tvShows: "TV Shows",
+  songs: "Songs",
+  youtubeVideos: "YouTube Videos",
 };
 
 function emptyFavorites(): Record<FavoriteCategory, FavoriteEntry[]> {
@@ -122,7 +180,20 @@ function emptyFavorites(): Record<FavoriteCategory, FavoriteEntry[]> {
     flowers: [],
     dateIdeas: [],
     littleThings: [],
+    movies: [],
+    tvShows: [],
+    songs: [],
+    youtubeVideos: [],
   };
+}
+
+function isSearchableCategory(category: FavoriteCategory): category is SearchableCategory {
+  return (
+    category === "movies" ||
+    category === "tvShows" ||
+    category === "songs" ||
+    category === "youtubeVideos"
+  );
 }
 
 function starterDateRows(userId: string, coupleId: string) {
@@ -164,6 +235,11 @@ function mapFavoriteRow(row: FavoriteItemRow): FavoriteEntry {
     category: row.category,
     name: row.name,
     details: row.details ?? "",
+    subtitle: row.subtitle ?? "",
+    source: row.source ?? "manual",
+    externalId: row.external_id ?? "",
+    externalUrl: row.external_url ?? "",
+    imageUrl: row.image_url ?? "",
   };
 }
 
@@ -274,6 +350,64 @@ function isNoRowsError(error: unknown) {
   return code === "PGRST116" || details.toLowerCase().includes("0 rows");
 }
 
+function parseCatalogSearchResults(payload: unknown): CatalogSearchItem[] {
+  if (!payload || typeof payload !== "object" || !("results" in payload)) {
+    return [];
+  }
+
+  const rawResults = (payload as { results?: unknown }).results;
+  if (!Array.isArray(rawResults)) {
+    return [];
+  }
+
+  const parsed: CatalogSearchItem[] = [];
+
+  for (const item of rawResults) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+
+    const result = item as Partial<CatalogSearchItem>;
+    const id = typeof result.id === "string" ? result.id.trim() : "";
+    const title = typeof result.title === "string" ? result.title.trim() : "";
+    if (!id || !title) {
+      continue;
+    }
+
+    const source = result.source;
+    if (
+      source !== "imdb_movie" &&
+      source !== "imdb_tv" &&
+      source !== "spotify_track" &&
+      source !== "youtube_video"
+    ) {
+      continue;
+    }
+
+    parsed.push({
+      id,
+      title,
+      subtitle: typeof result.subtitle === "string" ? result.subtitle.trim() : "",
+      details: typeof result.details === "string" ? result.details.trim() : "",
+      imageUrl: typeof result.imageUrl === "string" ? result.imageUrl.trim() : "",
+      externalUrl:
+        typeof result.externalUrl === "string" ? result.externalUrl.trim() : "",
+      source,
+    });
+  }
+
+  return parsed;
+}
+
+function parseApiError(payload: unknown, fallback: string) {
+  if (!payload || typeof payload !== "object" || !("error" in payload)) {
+    return fallback;
+  }
+
+  const message = (payload as { error?: unknown }).error;
+  return typeof message === "string" && message.trim() ? message.trim() : fallback;
+}
+
 export default function Home() {
   const [isBooting, setIsBooting] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
@@ -296,6 +430,16 @@ export default function Home() {
 
   const [favoriteName, setFavoriteName] = useState("");
   const [favoriteDetails, setFavoriteDetails] = useState("");
+  const [favoriteSubtitle, setFavoriteSubtitle] = useState("");
+  const [favoriteSource, setFavoriteSource] = useState<FavoriteSource>("manual");
+  const [favoriteExternalId, setFavoriteExternalId] = useState("");
+  const [favoriteExternalUrl, setFavoriteExternalUrl] = useState("");
+  const [favoriteImageUrl, setFavoriteImageUrl] = useState("");
+
+  const [catalogQuery, setCatalogQuery] = useState("");
+  const [catalogResults, setCatalogResults] = useState<CatalogSearchItem[]>([]);
+  const [catalogBusy, setCatalogBusy] = useState(false);
+  const [catalogMessage, setCatalogMessage] = useState("");
 
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [authEmail, setAuthEmail] = useState("");
@@ -313,6 +457,8 @@ export default function Home() {
   const [pairMessage, setPairMessage] = useState("");
 
   const currentCategoryEntries = favorites[activeCategory];
+  const activeCategoryMeta = categoryMeta.find((item) => item.key === activeCategory);
+  const activeCategorySupportsSearch = isSearchableCategory(activeCategory);
   const currentUserId = session?.user?.id ?? null;
   const viewingSelf = Boolean(currentUserId && selectedUserId === currentUserId);
 
@@ -350,7 +496,9 @@ export default function Home() {
         .eq("user_id", ownerUserId),
       supabase
         .from("favorite_items")
-        .select("id,category,name,details")
+        .select(
+          "id,category,name,details,subtitle,source,external_id,external_url,image_url",
+        )
         .eq("couple_id", coupleId)
         .eq("user_id", ownerUserId),
       supabase
@@ -790,6 +938,85 @@ export default function Home() {
     setImportantDates((current) => current.filter((entry) => entry.id !== id));
   };
 
+  const resetFavoriteDraft = useCallback(() => {
+    setFavoriteName("");
+    setFavoriteDetails("");
+    setFavoriteSubtitle("");
+    setFavoriteSource("manual");
+    setFavoriteExternalId("");
+    setFavoriteExternalUrl("");
+    setFavoriteImageUrl("");
+    setCatalogQuery("");
+    setCatalogResults([]);
+    setCatalogMessage("");
+    setCatalogBusy(false);
+  }, []);
+
+  const handleCategoryChange = (category: FavoriteCategory) => {
+    setActiveCategory(category);
+    resetFavoriteDraft();
+  };
+
+  const searchCatalog = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!viewingSelf || !isSearchableCategory(activeCategory)) {
+      return;
+    }
+
+    const query = catalogQuery.trim();
+    if (query.length < 2) {
+      setCatalogResults([]);
+      setCatalogMessage("Type at least 2 characters.");
+      return;
+    }
+
+    setCatalogBusy(true);
+    setCatalogMessage("");
+    setCatalogResults([]);
+
+    try {
+      const response = await fetch(
+        `/api/catalog/search?category=${encodeURIComponent(activeCategory)}&q=${encodeURIComponent(query)}`,
+      );
+
+      let payload: unknown = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+
+      if (!response.ok) {
+        setCatalogMessage(parseApiError(payload, "Search failed."));
+        setCatalogBusy(false);
+        return;
+      }
+
+      const parsedResults = parseCatalogSearchResults(payload);
+      setCatalogResults(parsedResults);
+      if (parsedResults.length === 0) {
+        setCatalogMessage("No matches found.");
+      }
+    } catch {
+      setCatalogMessage("Search failed (network or missing server keys).");
+    } finally {
+      setCatalogBusy(false);
+    }
+  };
+
+  const selectCatalogResult = (item: CatalogSearchItem) => {
+    setFavoriteName(item.title);
+    setFavoriteSubtitle(item.subtitle);
+    setFavoriteDetails(item.details);
+    setFavoriteSource(item.source);
+    setFavoriteExternalId(item.id);
+    setFavoriteExternalUrl(item.externalUrl);
+    setFavoriteImageUrl(item.imageUrl);
+    setCatalogMessage("Selected.");
+    setCatalogResults([]);
+  };
+
   const addFavorite = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -802,6 +1029,15 @@ export default function Home() {
       return;
     }
 
+    if (isSearchableCategory(activeCategory) && !favoriteExternalId.trim()) {
+      setDataMessage("Select one result from search first.");
+      return;
+    }
+
+    const source: FavoriteSource = isSearchableCategory(activeCategory)
+      ? favoriteSource
+      : "manual";
+
     setDataMessage("");
 
     const { data, error } = await supabase
@@ -812,8 +1048,19 @@ export default function Home() {
         category: activeCategory,
         name,
         details: favoriteDetails.trim(),
+        subtitle: favoriteSubtitle.trim(),
+        source,
+        external_id: isSearchableCategory(activeCategory)
+          ? favoriteExternalId.trim()
+          : "",
+        external_url: isSearchableCategory(activeCategory)
+          ? favoriteExternalUrl.trim()
+          : "",
+        image_url: isSearchableCategory(activeCategory) ? favoriteImageUrl.trim() : "",
       })
-      .select("id,category,name,details")
+      .select(
+        "id,category,name,details,subtitle,source,external_id,external_url,image_url",
+      )
       .single<FavoriteItemRow>();
 
     if (error) {
@@ -828,8 +1075,7 @@ export default function Home() {
       [mapped.category]: [mapped, ...current[mapped.category]],
     }));
 
-    setFavoriteName("");
-    setFavoriteDetails("");
+    resetFavoriteDraft();
   };
 
   const removeFavorite = async (category: FavoriteCategory, id: string) => {
@@ -1234,12 +1480,62 @@ export default function Home() {
                   key={category.key}
                   type="button"
                   className={activeCategory === category.key ? "tab active" : "tab"}
-                  onClick={() => setActiveCategory(category.key)}
+                  onClick={() => handleCategoryChange(category.key)}
                 >
                   {category.label}
                 </button>
               ))}
             </div>
+
+            {viewingSelf && activeCategorySupportsSearch && (
+              <form className="form search-form" onSubmit={searchCatalog}>
+                <label>
+                  Search {categoryLabel[activeCategory]}
+                  <input
+                    value={catalogQuery}
+                    onChange={(event) => setCatalogQuery(event.target.value)}
+                    placeholder={activeCategoryMeta?.hint}
+                  />
+                </label>
+                <button className="btn" type="submit" disabled={catalogBusy || dataBusy}>
+                  {catalogBusy ? "Searching..." : "Search"}
+                </button>
+              </form>
+            )}
+
+            {viewingSelf && activeCategorySupportsSearch && catalogMessage && (
+              <p className="meta search-message">{catalogMessage}</p>
+            )}
+
+            {viewingSelf &&
+              activeCategorySupportsSearch &&
+              catalogResults.length > 0 && (
+                <ul className="search-results">
+                  {catalogResults.map((item) => (
+                    <li key={`${item.source}:${item.id}`}>
+                      <button
+                        type="button"
+                        className="search-result-btn"
+                        onClick={() => selectCatalogResult(item)}
+                      >
+                        {item.imageUrl && (
+                          <img
+                            src={item.imageUrl}
+                            alt={item.title}
+                            className="media-thumb"
+                            loading="lazy"
+                          />
+                        )}
+                        <span className="search-result-copy">
+                          <span className="title">{item.title}</span>
+                          {item.subtitle && <span className="meta">{item.subtitle}</span>}
+                          {item.details && <span className="meta">{item.details}</span>}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
             {viewingSelf && (
               <form className="form" onSubmit={addFavorite}>
@@ -1248,9 +1544,25 @@ export default function Home() {
                   <input
                     value={favoriteName}
                     onChange={(event) => setFavoriteName(event.target.value)}
-                    placeholder={categoryMeta.find((item) => item.key === activeCategory)?.hint}
+                    placeholder={activeCategoryMeta?.hint}
+                    readOnly={activeCategorySupportsSearch}
                   />
                 </label>
+
+                {activeCategorySupportsSearch && favoriteSubtitle && (
+                  <p className="meta">{favoriteSubtitle}</p>
+                )}
+
+                {activeCategorySupportsSearch && favoriteExternalUrl && (
+                  <a
+                    className="link-btn"
+                    href={favoriteExternalUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open source page
+                  </a>
+                )}
 
                 <label>
                   Details
@@ -1275,9 +1587,28 @@ export default function Home() {
 
               {currentCategoryEntries.map((entry) => (
                 <li key={entry.id} className="item">
-                  <div>
+                  <div className="item-main">
+                    {entry.imageUrl && (
+                      <img
+                        src={entry.imageUrl}
+                        alt={entry.name}
+                        className="media-thumb"
+                        loading="lazy"
+                      />
+                    )}
                     <p className="title">{entry.name}</p>
+                    {entry.subtitle && <p className="meta">{entry.subtitle}</p>}
                     {entry.details && <p className="meta">{entry.details}</p>}
+                    {entry.externalUrl && (
+                      <a
+                        className="link-btn"
+                        href={entry.externalUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open source page
+                      </a>
+                    )}
                   </div>
 
                   {viewingSelf && (

@@ -7,6 +7,10 @@ A separate app for saving personal preferences and important reminders:
 - Favorite destinations
 - Favorite flowers
 - Date ideas and little things
+- Favorite movies (OMDb/IMDb lookup)
+- Favorite TV shows (OMDb/IMDb lookup)
+- Favorite songs (Spotify lookup)
+- Favorite YouTube videos (YouTube API lookup)
 - Shared notes
 - Couple sharing (create a shared space and join by invite code)
 
@@ -22,6 +26,10 @@ All data is stored in Supabase (Auth + Postgres + RLS), scoped to a shared coupl
    ```bash
    NEXT_PUBLIC_SUPABASE_URL=...
    NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+   OMDB_API_KEY=...
+   SPOTIFY_CLIENT_ID=...
+   SPOTIFY_CLIENT_SECRET=...
+   YOUTUBE_API_KEY=...
    ```
 3. Run migrations (after linking project):
    ```bash
