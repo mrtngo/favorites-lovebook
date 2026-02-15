@@ -46,7 +46,7 @@ type FavoriteItemRow = {
   details: string | null;
 };
 
-type CoupleNotesRow = {
+type UserNotesRow = {
   notes: string | null;
 };
 
@@ -65,6 +65,10 @@ type JoinCoupleRpcRow = {
 type CoupleMembershipRow = {
   couple_id: string;
   couples: CoupleRow | CoupleRow[] | null;
+};
+
+type CoupleMemberRow = {
+  user_id: string;
 };
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -274,6 +278,8 @@ export default function Home() {
   const [isBooting, setIsBooting] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
   const [couple, setCouple] = useState<Couple | null>(null);
+  const [memberUserIds, setMemberUserIds] = useState<string[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   const [importantDates, setImportantDates] = useState<ImportantDate[]>([]);
   const [favorites, setFavorites] = useState<Record<FavoriteCategory, FavoriteEntry[]>>(
@@ -307,8 +313,28 @@ export default function Home() {
   const [pairMessage, setPairMessage] = useState("");
 
   const currentCategoryEntries = favorites[activeCategory];
+  const currentUserId = session?.user?.id ?? null;
+  const viewingSelf = Boolean(currentUserId && selectedUserId === currentUserId);
 
-  const loadCoupleData = useCallback(async (coupleId: string) => {
+  const selectedUserLabel = (() => {
+    if (!selectedUserId || !currentUserId) {
+      return "";
+    }
+
+    if (selectedUserId === currentUserId) {
+      return "You";
+    }
+
+    const others = memberUserIds.filter((id) => id !== currentUserId);
+    const index = others.findIndex((id) => id === selectedUserId);
+    if (index < 0 || others.length <= 1) {
+      return "Partner";
+    }
+
+    return `Partner ${index + 1}`;
+  })();
+
+  const loadCoupleData = useCallback(async (coupleId: string, ownerUserId: string) => {
     if (!supabase) {
       return;
     }
@@ -320,16 +346,18 @@ export default function Home() {
       supabase
         .from("important_dates")
         .select("id,name,event_date,recurring,note")
-        .eq("couple_id", coupleId),
+        .eq("couple_id", coupleId)
+        .eq("user_id", ownerUserId),
       supabase
         .from("favorite_items")
         .select("id,category,name,details")
-        .eq("couple_id", coupleId),
-      supabase
-        .from("couple_notes")
-        .select("notes")
         .eq("couple_id", coupleId)
-        .maybeSingle<CoupleNotesRow>(),
+        .eq("user_id", ownerUserId),
+      supabase
+        .from("user_notes")
+        .select("notes")
+        .eq("user_id", ownerUserId)
+        .maybeSingle<UserNotesRow>(),
     ]);
 
     if (datesRes.error || favoritesRes.error || notesRes.error) {
@@ -359,6 +387,29 @@ export default function Home() {
     setDataBusy(false);
   }, []);
 
+  const loadCoupleMembers = useCallback(async (coupleId: string) => {
+    if (!supabase) {
+      return [] as string[];
+    }
+
+    const membersRes = await supabase
+      .from("couple_members")
+      .select("user_id")
+      .eq("couple_id", coupleId);
+
+    if (membersRes.error) {
+      setPairMessage(parseSupabaseError(membersRes.error, "Could not load members."));
+      return [];
+    }
+
+    const ids = Array.from(
+      new Set((membersRes.data ?? []).map((row) => (row as CoupleMemberRow).user_id)),
+    );
+
+    setMemberUserIds(ids);
+    return ids;
+  }, []);
+
   const loadCoupleForUser = useCallback(
     async (userId: string) => {
       if (!supabase) {
@@ -374,6 +425,8 @@ export default function Home() {
       if (membershipRes.error && !isNoRowsError(membershipRes.error)) {
         setPairMessage(parseSupabaseError(membershipRes.error, "Could not load couple."));
         setCouple(null);
+        setMemberUserIds([]);
+        setSelectedUserId(null);
         setImportantDates([]);
         setFavorites(emptyFavorites());
         setNotes("");
@@ -384,15 +437,21 @@ export default function Home() {
       setCouple(normalizedCouple);
 
       if (!normalizedCouple) {
+        setMemberUserIds([]);
+        setSelectedUserId(null);
         setImportantDates([]);
         setFavorites(emptyFavorites());
         setNotes("");
         return;
       }
 
-      await loadCoupleData(normalizedCouple.id);
+      const members = await loadCoupleMembers(normalizedCouple.id);
+      const initialSelected =
+        members.find((id) => id === userId) ?? members[0] ?? userId;
+
+      setSelectedUserId(initialSelected);
     },
-    [loadCoupleData],
+    [loadCoupleMembers],
   );
 
   useEffect(() => {
@@ -437,6 +496,7 @@ export default function Home() {
       setSession(nextSession);
       setAuthMessage("");
       setPairMessage("");
+      setDataMessage("");
 
       if (nextSession?.user) {
         void loadCoupleForUser(nextSession.user.id);
@@ -444,6 +504,8 @@ export default function Home() {
       }
 
       setCouple(null);
+      setMemberUserIds([]);
+      setSelectedUserId(null);
       setImportantDates([]);
       setFavorites(emptyFavorites());
       setNotes("");
@@ -455,6 +517,17 @@ export default function Home() {
       subscription.unsubscribe();
     };
   }, [loadCoupleForUser]);
+
+  useEffect(() => {
+    if (!couple?.id || !selectedUserId) {
+      return;
+    }
+
+    const coupleId = couple.id;
+    queueMicrotask(() => {
+      void loadCoupleData(coupleId, selectedUserId);
+    });
+  }, [couple?.id, selectedUserId, loadCoupleData]);
 
   const sortedDates = useMemo(() => {
     return [...importantDates].sort((a, b) => {
@@ -577,6 +650,8 @@ export default function Home() {
     };
 
     setCouple(freshCouple);
+    setMemberUserIds([session.user.id]);
+    setSelectedUserId(session.user.id);
     setImportantDates((seededRes.data ?? []).map((row) => mapDateRow(row as ImportantDateRow)));
     setFavorites(emptyFavorites());
     setNotes("");
@@ -629,7 +704,12 @@ export default function Home() {
     };
 
     setCouple(linkedCouple);
-    await loadCoupleData(linkedCouple.id);
+
+    const members = await loadCoupleMembers(linkedCouple.id);
+    const initialSelected =
+      members.find((id) => id === session.user.id) ?? members[0] ?? session.user.id;
+
+    setSelectedUserId(initialSelected);
     setPairName("");
     setJoinCode("");
     setPairMessage(`Joined ${linkedCouple.name}.`);
@@ -652,7 +732,7 @@ export default function Home() {
   const addDate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!supabase || !session?.user || !couple) {
+    if (!supabase || !session?.user || !couple || !viewingSelf) {
       return;
     }
 
@@ -689,7 +769,7 @@ export default function Home() {
   };
 
   const removeDate = async (id: string) => {
-    if (!supabase || !couple) {
+    if (!supabase || !session?.user || !couple || !viewingSelf) {
       return;
     }
 
@@ -699,7 +779,8 @@ export default function Home() {
       .from("important_dates")
       .delete()
       .eq("id", id)
-      .eq("couple_id", couple.id);
+      .eq("couple_id", couple.id)
+      .eq("user_id", session.user.id);
 
     if (error) {
       setDataMessage(error.message);
@@ -712,7 +793,7 @@ export default function Home() {
   const addFavorite = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!supabase || !session?.user || !couple) {
+    if (!supabase || !session?.user || !couple || !viewingSelf) {
       return;
     }
 
@@ -752,7 +833,7 @@ export default function Home() {
   };
 
   const removeFavorite = async (category: FavoriteCategory, id: string) => {
-    if (!supabase || !couple) {
+    if (!supabase || !session?.user || !couple || !viewingSelf) {
       return;
     }
 
@@ -762,7 +843,8 @@ export default function Home() {
       .from("favorite_items")
       .delete()
       .eq("id", id)
-      .eq("couple_id", couple.id);
+      .eq("couple_id", couple.id)
+      .eq("user_id", session.user.id);
 
     if (error) {
       setDataMessage(error.message);
@@ -776,19 +858,19 @@ export default function Home() {
   };
 
   const saveNotes = async () => {
-    if (!supabase || !couple) {
+    if (!supabase || !session?.user || !viewingSelf) {
       return;
     }
 
     setDataMessage("");
 
-    const { error } = await supabase.from("couple_notes").upsert(
+    const { error } = await supabase.from("user_notes").upsert(
       {
-        couple_id: couple.id,
+        user_id: session.user.id,
         notes,
       },
       {
-        onConflict: "couple_id",
+        onConflict: "user_id",
       },
     );
 
@@ -800,8 +882,8 @@ export default function Home() {
     setDataMessage("Notes saved.");
   };
 
-  const resetToTemplate = async () => {
-    if (!supabase || !session?.user || !couple) {
+  const resetMyData = async () => {
+    if (!supabase || !session?.user || !couple || !viewingSelf) {
       return;
     }
 
@@ -809,9 +891,17 @@ export default function Home() {
     setDataMessage("");
 
     const [delDates, delFavorites, delNotes] = await Promise.all([
-      supabase.from("important_dates").delete().eq("couple_id", couple.id),
-      supabase.from("favorite_items").delete().eq("couple_id", couple.id),
-      supabase.from("couple_notes").delete().eq("couple_id", couple.id),
+      supabase
+        .from("important_dates")
+        .delete()
+        .eq("couple_id", couple.id)
+        .eq("user_id", session.user.id),
+      supabase
+        .from("favorite_items")
+        .delete()
+        .eq("couple_id", couple.id)
+        .eq("user_id", session.user.id),
+      supabase.from("user_notes").delete().eq("user_id", session.user.id),
     ]);
 
     if (delDates.error || delFavorites.error || delNotes.error) {
@@ -819,7 +909,7 @@ export default function Home() {
         delDates.error?.message ??
           delFavorites.error?.message ??
           delNotes.error?.message ??
-          "Could not reset data.",
+          "Could not reset your data.",
       );
       setDataBusy(false);
       return;
@@ -1005,7 +1095,7 @@ export default function Home() {
           </p>
           <div className="hero-actions">
             <p className="status">
-              Space: {couple.name} · Code: <strong>{couple.inviteCode}</strong>
+              Space: {couple.name} · Code: <strong>{couple.inviteCode}</strong> · Viewing: {selectedUserLabel || "..."}
             </p>
             <div className="hero-buttons">
               <button className="link-btn" type="button" onClick={copyInviteCode}>
@@ -1016,6 +1106,39 @@ export default function Home() {
               </button>
             </div>
           </div>
+
+          {memberUserIds.length > 1 && (
+            <div className="profile-switch">
+              {memberUserIds.map((userId) => {
+                const isCurrentUser = userId === session.user?.id;
+                const partnerOrder = memberUserIds
+                  .filter((id) => id !== session.user?.id)
+                  .indexOf(userId);
+                const label = isCurrentUser
+                  ? "You"
+                  : memberUserIds.length <= 2
+                    ? "Partner"
+                    : `Partner ${partnerOrder + 1}`;
+
+                return (
+                  <button
+                    key={userId}
+                    type="button"
+                    className={selectedUserId === userId ? "profile-pill active" : "profile-pill"}
+                    onClick={() => setSelectedUserId(userId)}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {!viewingSelf && (
+            <p className="readonly-note">
+              You are viewing partner data in read-only mode.
+            </p>
+          )}
         </header>
 
         <div className="grid">
@@ -1023,48 +1146,50 @@ export default function Home() {
             <h2>Important Dates</h2>
             <p className="help">Birthdays, anniversaries, Valentine&apos;s, Christmas, etc.</p>
 
-            <form className="form" onSubmit={addDate}>
-              <label>
-                Name
-                <input
-                  value={dateName}
-                  onChange={(event) => setDateName(event.target.value)}
-                  placeholder="Birthday"
-                />
-              </label>
+            {viewingSelf && (
+              <form className="form" onSubmit={addDate}>
+                <label>
+                  Name
+                  <input
+                    value={dateName}
+                    onChange={(event) => setDateName(event.target.value)}
+                    placeholder="Birthday"
+                  />
+                </label>
 
-              <label>
-                Date
-                <input
-                  type="date"
-                  value={dateValue}
-                  onChange={(event) => setDateValue(event.target.value)}
-                />
-              </label>
+                <label>
+                  Date
+                  <input
+                    type="date"
+                    value={dateValue}
+                    onChange={(event) => setDateValue(event.target.value)}
+                  />
+                </label>
 
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={dateRecurring}
-                  onChange={(event) => setDateRecurring(event.target.checked)}
-                />
-                Repeat every year
-              </label>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={dateRecurring}
+                    onChange={(event) => setDateRecurring(event.target.checked)}
+                  />
+                  Repeat every year
+                </label>
 
-              <label>
-                Note
-                <textarea
-                  rows={2}
-                  value={dateNote}
-                  onChange={(event) => setDateNote(event.target.value)}
-                  placeholder="Plan, reminder, gift clue..."
-                />
-              </label>
+                <label>
+                  Note
+                  <textarea
+                    rows={2}
+                    value={dateNote}
+                    onChange={(event) => setDateNote(event.target.value)}
+                    placeholder="Plan, reminder, gift clue..."
+                  />
+                </label>
 
-              <button className="btn" type="submit" disabled={dataBusy}>
-                Add Date
-              </button>
-            </form>
+                <button className="btn" type="submit" disabled={dataBusy}>
+                  Add Date
+                </button>
+              </form>
+            )}
 
             <ul className="list">
               {sortedDates.length === 0 && <li className="empty">No dates saved yet.</li>}
@@ -1083,14 +1208,16 @@ export default function Home() {
                       {entry.note && <p className="meta">{entry.note}</p>}
                     </div>
 
-                    <button
-                      className="link-btn"
-                      type="button"
-                      onClick={() => removeDate(entry.id)}
-                      disabled={dataBusy}
-                    >
-                      Delete
-                    </button>
+                    {viewingSelf && (
+                      <button
+                        className="link-btn"
+                        type="button"
+                        onClick={() => removeDate(entry.id)}
+                        disabled={dataBusy}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </li>
                 );
               })}
@@ -1114,30 +1241,32 @@ export default function Home() {
               ))}
             </div>
 
-            <form className="form" onSubmit={addFavorite}>
-              <label>
-                {categoryLabel[activeCategory]}
-                <input
-                  value={favoriteName}
-                  onChange={(event) => setFavoriteName(event.target.value)}
-                  placeholder={categoryMeta.find((item) => item.key === activeCategory)?.hint}
-                />
-              </label>
+            {viewingSelf && (
+              <form className="form" onSubmit={addFavorite}>
+                <label>
+                  {categoryLabel[activeCategory]}
+                  <input
+                    value={favoriteName}
+                    onChange={(event) => setFavoriteName(event.target.value)}
+                    placeholder={categoryMeta.find((item) => item.key === activeCategory)?.hint}
+                  />
+                </label>
 
-              <label>
-                Details
-                <textarea
-                  rows={2}
-                  value={favoriteDetails}
-                  onChange={(event) => setFavoriteDetails(event.target.value)}
-                  placeholder="Color, vibe, budget, season, anything useful..."
-                />
-              </label>
+                <label>
+                  Details
+                  <textarea
+                    rows={2}
+                    value={favoriteDetails}
+                    onChange={(event) => setFavoriteDetails(event.target.value)}
+                    placeholder="Color, vibe, budget, season, anything useful..."
+                  />
+                </label>
 
-              <button className="btn" type="submit" disabled={dataBusy}>
-                Add {categoryLabel[activeCategory]}
-              </button>
-            </form>
+                <button className="btn" type="submit" disabled={dataBusy}>
+                  Add {categoryLabel[activeCategory]}
+                </button>
+              </form>
+            )}
 
             <ul className="list">
               {currentCategoryEntries.length === 0 && (
@@ -1151,14 +1280,16 @@ export default function Home() {
                     {entry.details && <p className="meta">{entry.details}</p>}
                   </div>
 
-                  <button
-                    className="link-btn"
-                    type="button"
-                    onClick={() => removeFavorite(activeCategory, entry.id)}
-                    disabled={dataBusy}
-                  >
-                    Delete
-                  </button>
+                  {viewingSelf && (
+                    <button
+                      className="link-btn"
+                      type="button"
+                      onClick={() => removeFavorite(activeCategory, entry.id)}
+                      disabled={dataBusy}
+                    >
+                      Delete
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -1166,30 +1297,35 @@ export default function Home() {
         </div>
 
         <article className="card full">
-          <h2>Shared Notes</h2>
-          <p className="help">Anything either of you says once and never wants to repeat.</p>
+          <h2>{viewingSelf ? "Your Notes" : "Partner Notes"}</h2>
+          <p className="help">Preferences, reminders, and details worth remembering.</p>
           <textarea
             rows={4}
             value={notes}
             onChange={(event) => setNotes(event.target.value)}
             placeholder="Sizes, favorite brands, places to go, flowers she does not like..."
+            readOnly={!viewingSelf}
           />
-          <div className="notes-actions">
-            <button className="btn" type="button" onClick={saveNotes} disabled={dataBusy}>
-              Save Notes
-            </button>
-          </div>
+          {viewingSelf && (
+            <div className="notes-actions">
+              <button className="btn" type="button" onClick={saveNotes} disabled={dataBusy}>
+                Save Notes
+              </button>
+            </div>
+          )}
         </article>
 
         <footer className="footer">
-          <button
-            className="link-btn"
-            type="button"
-            onClick={resetToTemplate}
-            disabled={dataBusy}
-          >
-            Reset to starter template
-          </button>
+          {viewingSelf && (
+            <button
+              className="link-btn"
+              type="button"
+              onClick={resetMyData}
+              disabled={dataBusy}
+            >
+              Reset my starter template
+            </button>
+          )}
           {dataBusy && <span>Syncing...</span>}
           {dataMessage && <span>{dataMessage}</span>}
         </footer>
