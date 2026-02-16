@@ -233,6 +233,53 @@ textarea {
   margin-top: 12px;
 }
 
+.setup-name {
+  margin-top: 14px;
+}
+
+.profile-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.profile-pill {
+  background: rgba(12, 12, 31, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  color: var(--text);
+  cursor: pointer;
+  padding: 7px 12px;
+}
+
+.profile-pill.active {
+  background: rgba(255, 200, 111, 0.92);
+  border-color: transparent;
+  color: #351640;
+  font-weight: 800;
+}
+
+.readonly-note {
+  color: var(--accent-2);
+  font-size: 0.9rem;
+}
+
+.names-card {
+  margin-bottom: 16px;
+}
+
+.names-form {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.names-form .btn {
+  align-self: end;
+}
+
 .tabs {
   display: flex;
   flex-wrap: wrap;
@@ -397,6 +444,10 @@ textarea {
 
 @media (max-width: 920px) {
   .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .names-form {
     grid-template-columns: 1fr;
   }
 

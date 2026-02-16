@@ -105,10 +105,18 @@ type CoupleMembershipRow = {
 
 type CoupleMemberRow = {
   user_id: string;
+  display_name: string | null;
+};
+
+type CoupleMemberProfile = {
+  userId: string;
+  displayName: string;
 };
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const APP_SITE_URL =
+  process.env.NEXT_PUBLIC_SITE_URL ?? "https://vdpmgodatabase.vercel.app";
 
 const supabase =
   SUPABASE_URL && SUPABASE_ANON_KEY
@@ -440,7 +448,7 @@ export default function Home() {
   const [isBooting, setIsBooting] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
   const [couple, setCouple] = useState<Couple | null>(null);
-  const [memberUserIds, setMemberUserIds] = useState<string[]>([]);
+  const [memberProfiles, setMemberProfiles] = useState<CoupleMemberProfile[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   const [importantDates, setImportantDates] = useState<ImportantDate[]>([]);
@@ -481,12 +489,30 @@ export default function Home() {
 
   const [pairName, setPairName] = useState("");
   const [joinCode, setJoinCode] = useState("");
+  const [setupDisplayName, setSetupDisplayName] = useState("");
   const [pairBusy, setPairBusy] = useState(false);
   const [pairMessage, setPairMessage] = useState("");
+
+  const [myDisplayNameDraft, setMyDisplayNameDraft] = useState("");
+  const [coupleNameDraft, setCoupleNameDraft] = useState("");
 
   const currentCategoryEntries = favorites[activeCategory];
   const activeCategoryMeta = categoryMeta.find((item) => item.key === activeCategory);
   const activeCategorySupportsSearch = isSearchableCategory(activeCategory);
+  const memberUserIds = useMemo(
+    () => memberProfiles.map((member) => member.userId),
+    [memberProfiles],
+  );
+  const memberDisplayNames = useMemo(() => {
+    const byId: Record<string, string> = {};
+    for (const member of memberProfiles) {
+      const name = member.displayName.trim();
+      if (name) {
+        byId[member.userId] = name;
+      }
+    }
+    return byId;
+  }, [memberProfiles]);
   const currentUserId = session?.user?.id ?? null;
   const viewingSelf = Boolean(currentUserId && selectedUserId === currentUserId);
 
@@ -496,11 +522,15 @@ export default function Home() {
     }
 
     if (selectedUserId === currentUserId) {
-      return "You";
+      return memberDisplayNames[currentUserId] ?? "You";
     }
 
     const others = memberUserIds.filter((id) => id !== currentUserId);
     const index = others.findIndex((id) => id === selectedUserId);
+    const namedPartner = memberDisplayNames[selectedUserId];
+    if (namedPartner) {
+      return namedPartner;
+    }
     if (index < 0 || others.length <= 1) {
       return "Partner";
     }
@@ -565,12 +595,12 @@ export default function Home() {
 
   const loadCoupleMembers = useCallback(async (coupleId: string) => {
     if (!supabase) {
-      return [] as string[];
+      return [] as CoupleMemberProfile[];
     }
 
     const membersRes = await supabase
       .from("couple_members")
-      .select("user_id")
+      .select("user_id,display_name")
       .eq("couple_id", coupleId);
 
     if (membersRes.error) {
@@ -578,12 +608,23 @@ export default function Home() {
       return [];
     }
 
-    const ids = Array.from(
-      new Set((membersRes.data ?? []).map((row) => (row as CoupleMemberRow).user_id)),
-    );
+    const deduped = new Map<string, CoupleMemberProfile>();
+    for (const rawRow of membersRes.data ?? []) {
+      const row = rawRow as CoupleMemberRow;
+      const userId = row.user_id;
+      if (!userId || deduped.has(userId)) {
+        continue;
+      }
 
-    setMemberUserIds(ids);
-    return ids;
+      deduped.set(userId, {
+        userId,
+        displayName: (row.display_name ?? "").trim(),
+      });
+    }
+
+    const profiles = Array.from(deduped.values());
+    setMemberProfiles(profiles);
+    return profiles;
   }, []);
 
   const loadCoupleForUser = useCallback(
@@ -601,11 +642,13 @@ export default function Home() {
       if (membershipRes.error && !isNoRowsError(membershipRes.error)) {
         setPairMessage(parseSupabaseError(membershipRes.error, "Could not load couple."));
         setCouple(null);
-        setMemberUserIds([]);
+        setMemberProfiles([]);
         setSelectedUserId(null);
         setImportantDates([]);
         setFavorites(emptyFavorites());
         setNotes("");
+        setMyDisplayNameDraft("");
+        setCoupleNameDraft("");
         return;
       }
 
@@ -613,19 +656,26 @@ export default function Home() {
       setCouple(normalizedCouple);
 
       if (!normalizedCouple) {
-        setMemberUserIds([]);
+        setMemberProfiles([]);
         setSelectedUserId(null);
         setImportantDates([]);
         setFavorites(emptyFavorites());
         setNotes("");
+        setMyDisplayNameDraft("");
+        setCoupleNameDraft("");
         return;
       }
 
       const members = await loadCoupleMembers(normalizedCouple.id);
+      const memberIds = members.map((member) => member.userId);
       const initialSelected =
-        members.find((id) => id === userId) ?? members[0] ?? userId;
+        memberIds.find((id) => id === userId) ?? memberIds[0] ?? userId;
 
       setSelectedUserId(initialSelected);
+      setCoupleNameDraft(normalizedCouple.name);
+      setMyDisplayNameDraft(
+        members.find((member) => member.userId === userId)?.displayName ?? "",
+      );
     },
     [loadCoupleMembers],
   );
@@ -680,12 +730,15 @@ export default function Home() {
       }
 
       setCouple(null);
-      setMemberUserIds([]);
+      setMemberProfiles([]);
       setSelectedUserId(null);
       setImportantDates([]);
       setFavorites(emptyFavorites());
       setNotes("");
       setDataBusy(false);
+      setMyDisplayNameDraft("");
+      setCoupleNameDraft("");
+      setSetupDisplayName("");
     });
 
     return () => {
@@ -740,7 +793,13 @@ export default function Home() {
       return;
     }
 
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: APP_SITE_URL,
+      },
+    });
 
     if (error) {
       setAuthMessage(error.message);
@@ -781,6 +840,12 @@ export default function Home() {
       return;
     }
 
+    const trimmedDisplayName = setupDisplayName.trim();
+    if (!trimmedDisplayName) {
+      setPairMessage("Add your name before creating a space.");
+      return;
+    }
+
     setPairBusy(true);
     setPairMessage("");
 
@@ -802,6 +867,7 @@ export default function Home() {
     const joinRes = await supabase.from("couple_members").insert({
       couple_id: createdRes.data.id,
       user_id: session.user.id,
+      display_name: trimmedDisplayName,
     });
 
     if (joinRes.error) {
@@ -826,13 +892,21 @@ export default function Home() {
     };
 
     setCouple(freshCouple);
-    setMemberUserIds([session.user.id]);
+    setMemberProfiles([
+      {
+        userId: session.user.id,
+        displayName: trimmedDisplayName,
+      },
+    ]);
     setSelectedUserId(session.user.id);
     setImportantDates((seededRes.data ?? []).map((row) => mapDateRow(row as ImportantDateRow)));
     setFavorites(emptyFavorites());
     setNotes("");
+    setMyDisplayNameDraft(trimmedDisplayName);
+    setCoupleNameDraft(freshCouple.name);
     setPairName("");
     setJoinCode("");
+    setSetupDisplayName(trimmedDisplayName);
     setPairMessage(`Couple created. Share this code: ${freshCouple.inviteCode}`);
     setPairBusy(false);
   };
@@ -847,6 +921,12 @@ export default function Home() {
     const code = joinCode.trim().toUpperCase();
     if (!code) {
       setPairMessage("Enter the invite code.");
+      return;
+    }
+
+    const trimmedDisplayName = setupDisplayName.trim();
+    if (!trimmedDisplayName) {
+      setPairMessage("Add your name before joining.");
       return;
     }
 
@@ -876,13 +956,27 @@ export default function Home() {
 
     setCouple(linkedCouple);
 
+    const updateNameRes = await supabase
+      .from("couple_members")
+      .update({ display_name: trimmedDisplayName })
+      .eq("couple_id", linkedCouple.id)
+      .eq("user_id", session.user.id);
+
+    if (updateNameRes.error) {
+      setPairMessage(parseSupabaseError(updateNameRes.error, "Joined, but could not set your name."));
+    }
+
     const members = await loadCoupleMembers(linkedCouple.id);
+    const memberIds = members.map((member) => member.userId);
     const initialSelected =
-      members.find((id) => id === session.user.id) ?? members[0] ?? session.user.id;
+      memberIds.find((id) => id === session.user.id) ?? memberIds[0] ?? session.user.id;
 
     setSelectedUserId(initialSelected);
+    setMyDisplayNameDraft(trimmedDisplayName);
+    setCoupleNameDraft(linkedCouple.name);
     setPairName("");
     setJoinCode("");
+    setSetupDisplayName(trimmedDisplayName);
     setPairMessage(`Joined ${linkedCouple.name}.`);
     setPairBusy(false);
   };
@@ -898,6 +992,70 @@ export default function Home() {
     } catch {
       setDataMessage("Could not copy invite code.");
     }
+  };
+
+  const saveNames = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!supabase || !session?.user || !couple) {
+      return;
+    }
+
+    const trimmedDisplayName = myDisplayNameDraft.trim();
+    const trimmedCoupleName = coupleNameDraft.trim();
+
+    if (!trimmedDisplayName) {
+      setDataMessage("Your name cannot be empty.");
+      return;
+    }
+
+    if (!trimmedCoupleName) {
+      setDataMessage("Space name cannot be empty.");
+      return;
+    }
+
+    setDataBusy(true);
+    setDataMessage("");
+
+    const [memberRes, coupleRes] = await Promise.all([
+      supabase
+        .from("couple_members")
+        .update({ display_name: trimmedDisplayName })
+        .eq("couple_id", couple.id)
+        .eq("user_id", session.user.id),
+      supabase
+        .from("couples")
+        .update({ name: trimmedCoupleName })
+        .eq("id", couple.id),
+    ]);
+
+    if (memberRes.error || coupleRes.error) {
+      setDataMessage(
+        memberRes.error?.message ??
+          coupleRes.error?.message ??
+          "Could not save names.",
+      );
+      setDataBusy(false);
+      return;
+    }
+
+    setMemberProfiles((current) =>
+      current.map((member) =>
+        member.userId === session.user.id
+          ? { ...member, displayName: trimmedDisplayName }
+          : member,
+      ),
+    );
+    setCouple((current) =>
+      current
+        ? {
+            ...current,
+            name: trimmedCoupleName,
+          }
+        : current,
+    );
+    setDataBusy(false);
+    setDataMessage("Names saved.");
   };
 
   const addDate = async (event: FormEvent<HTMLFormElement>) => {
@@ -1304,6 +1462,15 @@ export default function Home() {
             the other person can join.
           </p>
 
+          <label className="setup-name">
+            Your Name
+            <input
+              value={setupDisplayName}
+              onChange={(event) => setSetupDisplayName(event.target.value)}
+              placeholder="Your name"
+            />
+          </label>
+
           <div className="pair-grid">
             <form className="form card pair-card" onSubmit={createPair}>
               <h2>Create</h2>
@@ -1383,11 +1550,17 @@ export default function Home() {
                 const partnerOrder = memberUserIds
                   .filter((id) => id !== session.user?.id)
                   .indexOf(userId);
-                const label = isCurrentUser
+                const fallbackLabel = isCurrentUser
                   ? "You"
                   : memberUserIds.length <= 2
                     ? "Partner"
                     : `Partner ${partnerOrder + 1}`;
+                const customName = memberDisplayNames[userId] ?? "";
+                const label = customName
+                  ? isCurrentUser
+                    ? `${customName} (You)`
+                    : customName
+                  : fallbackLabel;
 
                 return (
                   <button
@@ -1409,6 +1582,32 @@ export default function Home() {
             </p>
           )}
         </header>
+
+        <article className="card names-card">
+          <h2>Names</h2>
+          <p className="help">Set your name and your shared space name.</p>
+          <form className="form names-form" onSubmit={saveNames}>
+            <label>
+              Your Name
+              <input
+                value={myDisplayNameDraft}
+                onChange={(event) => setMyDisplayNameDraft(event.target.value)}
+                placeholder="Your name"
+              />
+            </label>
+            <label>
+              Space Name
+              <input
+                value={coupleNameDraft}
+                onChange={(event) => setCoupleNameDraft(event.target.value)}
+                placeholder="Our space"
+              />
+            </label>
+            <button className="btn" type="submit" disabled={dataBusy}>
+              Save Names
+            </button>
+          </form>
+        </article>
 
         <div className="grid">
           <article className="card">
