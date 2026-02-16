@@ -478,6 +478,12 @@ textarea {
   margin-top: 14px;
 }
 
+.footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
 .message {
   color: var(--accent);
   font-size: 0.92rem;
@@ -519,6 +525,11 @@ textarea {
   .footer {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .footer-actions {
+    flex-direction: column;
+    gap: 8px;
   }
 
   .hero-actions {

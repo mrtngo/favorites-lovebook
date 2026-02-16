@@ -927,6 +927,56 @@ export default function Home() {
     await supabase.auth.signOut();
   };
 
+  const leaveCurrentCouple = async () => {
+    if (!supabase || !session?.user || !couple) {
+      return;
+    }
+
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        "Leave this shared dashboard? You can join another one anytime.",
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setDataBusy(true);
+    setDataMessage("");
+
+    const rememberedName = myDisplayNameDraft.trim() || setupDisplayName.trim();
+
+    const { error } = await supabase
+      .from("couple_members")
+      .delete()
+      .eq("couple_id", couple.id)
+      .eq("user_id", session.user.id);
+
+    if (error) {
+      setDataMessage(parseSupabaseError(error, "Could not leave this shared dashboard."));
+      setDataBusy(false);
+      return;
+    }
+
+    setCouple(null);
+    setMemberProfiles([]);
+    setSelectedUserId(null);
+    setImportantDates([]);
+    setFavorites(emptyFavorites());
+    setNotes("");
+    setPalette(cloneDefaultPalette());
+    setPaletteDraft(cloneDefaultPalette());
+    setMyDisplayNameDraft("");
+    setCoupleNameDraft("");
+    setPairName("");
+    setJoinCode("");
+    setShowCustomization(false);
+    setDataBusy(false);
+    setDataMessage("");
+    setSetupDisplayName(rememberedName);
+    setPairMessage("You left the shared dashboard. Join another one with a code.");
+  };
+
   const createPair = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -2054,16 +2104,26 @@ export default function Home() {
         </article>
 
         <footer className="footer">
-          {viewingSelf && (
+          <div className="footer-actions">
+            {viewingSelf && (
+              <button
+                className="link-btn"
+                type="button"
+                onClick={resetMyData}
+                disabled={dataBusy}
+              >
+                Reset my starter template
+              </button>
+            )}
             <button
               className="link-btn"
               type="button"
-              onClick={resetMyData}
+              onClick={leaveCurrentCouple}
               disabled={dataBusy}
             >
-              Reset my starter template
+              Leave shared dashboard
             </button>
-          )}
+          </div>
           {dataBusy && <span>Syncing...</span>}
           {dataMessage && <span>{dataMessage}</span>}
         </footer>
