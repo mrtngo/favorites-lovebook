@@ -12,6 +12,7 @@ A separate app for saving personal preferences and important reminders:
 - Favorite songs (Spotify lookup)
 - Favorite YouTube videos (YouTube API lookup)
 - Shared notes
+- Per-user dashboard color palettes
 - Couple sharing (create a shared space and join by invite code)
 
 All data is stored in Supabase (Auth + Postgres + RLS), scoped to a shared couple space.

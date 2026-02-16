@@ -2,7 +2,14 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { createClient, type Session } from "@supabase/supabase-js";
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type CSSProperties,
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 type FavoriteCategory =
   | "gifts"
@@ -21,6 +28,14 @@ type FavoriteSource =
   | "imdb_tv"
   | "spotify_track"
   | "youtube_video";
+
+type DashboardPalette = {
+  bgA: string;
+  bgB: string;
+  bgC: string;
+  accent: string;
+  accent2: string;
+};
 
 type SearchableCategory = "movies" | "tvShows" | "songs" | "youtubeVideos";
 
@@ -82,6 +97,11 @@ type FavoriteItemRow = {
 
 type UserNotesRow = {
   notes: string | null;
+  palette_bg_a: string | null;
+  palette_bg_b: string | null;
+  palette_bg_c: string | null;
+  palette_accent: string | null;
+  palette_accent_2: string | null;
 };
 
 type CoupleRow = {
@@ -183,6 +203,25 @@ const categoryLabel: Record<FavoriteCategory, string> = {
   youtubeVideos: "YouTube Videos",
 };
 
+const DEFAULT_PALETTE: DashboardPalette = {
+  bgA: "#2a0f31",
+  bgB: "#5d1842",
+  bgC: "#1d2249",
+  accent: "#ffc86f",
+  accent2: "#ffdbe9",
+};
+
+const paletteFieldMeta: Array<{
+  key: keyof DashboardPalette;
+  label: string;
+}> = [
+  { key: "bgA", label: "Background A" },
+  { key: "bgB", label: "Background B" },
+  { key: "bgC", label: "Background C" },
+  { key: "accent", label: "Accent" },
+  { key: "accent2", label: "Accent 2" },
+];
+
 function emptyFavorites(): Record<FavoriteCategory, FavoriteEntry[]> {
   return {
     gifts: [],
@@ -204,6 +243,29 @@ function isSearchableCategory(category: FavoriteCategory): category is Searchabl
     category === "songs" ||
     category === "youtubeVideos"
   );
+}
+
+function cloneDefaultPalette(): DashboardPalette {
+  return { ...DEFAULT_PALETTE };
+}
+
+function normalizeHexColor(value: string | null | undefined, fallback: string) {
+  if (!value) {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  return /^#[0-9a-fA-F]{6}$/.test(normalized) ? normalized.toLowerCase() : fallback;
+}
+
+function normalizePaletteFromRow(row: UserNotesRow | null | undefined): DashboardPalette {
+  return {
+    bgA: normalizeHexColor(row?.palette_bg_a, DEFAULT_PALETTE.bgA),
+    bgB: normalizeHexColor(row?.palette_bg_b, DEFAULT_PALETTE.bgB),
+    bgC: normalizeHexColor(row?.palette_bg_c, DEFAULT_PALETTE.bgC),
+    accent: normalizeHexColor(row?.palette_accent, DEFAULT_PALETTE.accent),
+    accent2: normalizeHexColor(row?.palette_accent_2, DEFAULT_PALETTE.accent2),
+  };
 }
 
 function starterDateRows(userId: string, coupleId: string) {
@@ -456,6 +518,8 @@ export default function Home() {
     emptyFavorites,
   );
   const [notes, setNotes] = useState("");
+  const [palette, setPalette] = useState<DashboardPalette>(cloneDefaultPalette);
+  const [paletteDraft, setPaletteDraft] = useState<DashboardPalette>(cloneDefaultPalette);
 
   const [activeCategory, setActiveCategory] = useState<FavoriteCategory>("gifts");
 
@@ -515,6 +579,15 @@ export default function Home() {
   }, [memberProfiles]);
   const currentUserId = session?.user?.id ?? null;
   const viewingSelf = Boolean(currentUserId && selectedUserId === currentUserId);
+  const paletteStyle = useMemo(() => {
+    return {
+      "--bg-a": palette.bgA,
+      "--bg-b": palette.bgB,
+      "--bg-c": palette.bgC,
+      "--accent": palette.accent,
+      "--accent-2": palette.accent2,
+    } as CSSProperties;
+  }, [palette]);
 
   const selectedUserLabel = (() => {
     if (!selectedUserId || !currentUserId) {
@@ -561,7 +634,9 @@ export default function Home() {
         .eq("user_id", ownerUserId),
       supabase
         .from("user_notes")
-        .select("notes")
+        .select(
+          "notes,palette_bg_a,palette_bg_b,palette_bg_c,palette_accent,palette_accent_2",
+        )
         .eq("user_id", ownerUserId)
         .maybeSingle<UserNotesRow>(),
     ]);
@@ -589,7 +664,11 @@ export default function Home() {
 
     setImportantDates(mappedDates);
     setFavorites(mappedFavorites);
-    setNotes(notesRes.data?.notes ?? "");
+    const notesRow = (notesRes.data ?? null) as UserNotesRow | null;
+    const loadedPalette = normalizePaletteFromRow(notesRow);
+    setNotes(notesRow?.notes ?? "");
+    setPalette(loadedPalette);
+    setPaletteDraft(loadedPalette);
     setDataBusy(false);
   }, []);
 
@@ -647,6 +726,8 @@ export default function Home() {
         setImportantDates([]);
         setFavorites(emptyFavorites());
         setNotes("");
+        setPalette(cloneDefaultPalette());
+        setPaletteDraft(cloneDefaultPalette());
         setMyDisplayNameDraft("");
         setCoupleNameDraft("");
         return;
@@ -661,6 +742,8 @@ export default function Home() {
         setImportantDates([]);
         setFavorites(emptyFavorites());
         setNotes("");
+        setPalette(cloneDefaultPalette());
+        setPaletteDraft(cloneDefaultPalette());
         setMyDisplayNameDraft("");
         setCoupleNameDraft("");
         return;
@@ -735,6 +818,8 @@ export default function Home() {
       setImportantDates([]);
       setFavorites(emptyFavorites());
       setNotes("");
+      setPalette(cloneDefaultPalette());
+      setPaletteDraft(cloneDefaultPalette());
       setDataBusy(false);
       setMyDisplayNameDraft("");
       setCoupleNameDraft("");
@@ -902,6 +987,8 @@ export default function Home() {
     setImportantDates((seededRes.data ?? []).map((row) => mapDateRow(row as ImportantDateRow)));
     setFavorites(emptyFavorites());
     setNotes("");
+    setPalette(cloneDefaultPalette());
+    setPaletteDraft(cloneDefaultPalette());
     setMyDisplayNameDraft(trimmedDisplayName);
     setCoupleNameDraft(freshCouple.name);
     setPairName("");
@@ -1284,7 +1371,24 @@ export default function Home() {
     }));
   };
 
-  const saveNotes = async () => {
+  const updatePaletteColor = (key: keyof DashboardPalette, value: string) => {
+    const nextValue = normalizeHexColor(value, paletteDraft[key]);
+    const nextPalette = {
+      ...paletteDraft,
+      [key]: nextValue,
+    };
+
+    setPaletteDraft(nextPalette);
+    if (viewingSelf) {
+      setPalette(nextPalette);
+    }
+  };
+
+  const saveUserNotesAndPalette = async (
+    nextNotes: string,
+    nextPalette: DashboardPalette,
+    successMessage: string,
+  ) => {
     if (!supabase || !session?.user || !viewingSelf) {
       return;
     }
@@ -1294,7 +1398,12 @@ export default function Home() {
     const { error } = await supabase.from("user_notes").upsert(
       {
         user_id: session.user.id,
-        notes,
+        notes: nextNotes,
+        palette_bg_a: nextPalette.bgA,
+        palette_bg_b: nextPalette.bgB,
+        palette_bg_c: nextPalette.bgC,
+        palette_accent: nextPalette.accent,
+        palette_accent_2: nextPalette.accent2,
       },
       {
         onConflict: "user_id",
@@ -1306,7 +1415,25 @@ export default function Home() {
       return;
     }
 
-    setDataMessage("Notes saved.");
+    setPalette(nextPalette);
+    setPaletteDraft(nextPalette);
+    setDataMessage(successMessage);
+  };
+
+  const saveNotes = async () => {
+    if (!viewingSelf) {
+      return;
+    }
+
+    await saveUserNotesAndPalette(notes, paletteDraft, "Notes saved.");
+  };
+
+  const savePalette = async () => {
+    if (!viewingSelf) {
+      return;
+    }
+
+    await saveUserNotesAndPalette(notes, paletteDraft, "Palette saved.");
   };
 
   const resetMyData = async () => {
@@ -1356,12 +1483,14 @@ export default function Home() {
     setImportantDates((data ?? []).map((row) => mapDateRow(row as ImportantDateRow)));
     setFavorites(emptyFavorites());
     setNotes("");
+    setPalette(cloneDefaultPalette());
+    setPaletteDraft(cloneDefaultPalette());
     setDataBusy(false);
   };
 
   if (!supabase) {
     return (
-      <main className="shell">
+      <main className="shell" style={paletteStyle}>
         <section className="panel auth-panel">
           <h1>Supabase env is missing</h1>
           <p>
@@ -1375,7 +1504,7 @@ export default function Home() {
 
   if (isBooting) {
     return (
-      <main className="shell">
+      <main className="shell" style={paletteStyle}>
         <section className="panel auth-panel">
           <h1>Loading...</h1>
           <p>Checking session and syncing your data.</p>
@@ -1386,7 +1515,7 @@ export default function Home() {
 
   if (!session) {
     return (
-      <main className="shell">
+      <main className="shell" style={paletteStyle}>
         <div className="bg-overlay" aria-hidden="true" />
 
         <section className="panel auth-panel">
@@ -1451,7 +1580,7 @@ export default function Home() {
 
   if (!couple) {
     return (
-      <main className="shell">
+      <main className="shell" style={paletteStyle}>
         <div className="bg-overlay" aria-hidden="true" />
 
         <section className="panel auth-panel">
@@ -1518,7 +1647,7 @@ export default function Home() {
   }
 
   return (
-    <main className="shell">
+    <main className="shell" style={paletteStyle}>
       <div className="bg-overlay" aria-hidden="true" />
 
       <section className="panel">
@@ -1607,6 +1736,34 @@ export default function Home() {
               Save Names
             </button>
           </form>
+        </article>
+
+        <article className="card palette-card">
+          <h2>{viewingSelf ? "Palette" : "Palette Preview"}</h2>
+          <p className="help">Customize dashboard colors for this profile.</p>
+          <div className="palette-grid">
+            {paletteFieldMeta.map((field) => (
+              <label key={field.key} className="palette-field">
+                {field.label}
+                <div className="palette-input-wrap">
+                  <input
+                    type="color"
+                    value={paletteDraft[field.key]}
+                    onChange={(event) => updatePaletteColor(field.key, event.target.value)}
+                    disabled={!viewingSelf}
+                  />
+                  <span className="palette-code">{paletteDraft[field.key]}</span>
+                </div>
+              </label>
+            ))}
+          </div>
+          {viewingSelf && (
+            <div className="notes-actions">
+              <button className="btn" type="button" onClick={savePalette} disabled={dataBusy}>
+                Save Palette
+              </button>
+            </div>
+          )}
         </article>
 
         <div className="grid">
