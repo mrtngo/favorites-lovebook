@@ -91,9 +91,11 @@ type CoupleRow = {
 };
 
 type JoinCoupleRpcRow = {
-  couple_id: string;
-  couple_name: string;
-  invite_code: string;
+  id?: string;
+  name?: string;
+  couple_id?: string;
+  couple_name?: string;
+  invite_code?: string;
 };
 
 type CoupleMembershipRow = {
@@ -406,6 +408,32 @@ function parseApiError(payload: unknown, fallback: string) {
 
   const message = (payload as { error?: unknown }).error;
   return typeof message === "string" && message.trim() ? message.trim() : fallback;
+}
+
+function parseJoinCouplePayload(payload: unknown): Couple | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const row = payload as JoinCoupleRpcRow;
+  const id =
+    (typeof row.couple_id === "string" ? row.couple_id.trim() : "") ||
+    (typeof row.id === "string" ? row.id.trim() : "");
+  const name =
+    (typeof row.couple_name === "string" ? row.couple_name.trim() : "") ||
+    (typeof row.name === "string" ? row.name.trim() : "");
+  const inviteCode =
+    typeof row.invite_code === "string" ? row.invite_code.trim() : "";
+
+  if (!id || !name || !inviteCode) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    inviteCode,
+  };
 }
 
 export default function Home() {
@@ -839,17 +867,12 @@ export default function Home() {
       ? (joinRes.data[0] as JoinCoupleRpcRow | undefined)
       : (joinRes.data as JoinCoupleRpcRow | null);
 
-    if (!payload) {
+    const linkedCouple = parseJoinCouplePayload(payload);
+    if (!linkedCouple) {
       setPairMessage("Could not join with that code.");
       setPairBusy(false);
       return;
     }
-
-    const linkedCouple: Couple = {
-      id: payload.couple_id,
-      name: payload.couple_name,
-      inviteCode: payload.invite_code,
-    };
 
     setCouple(linkedCouple);
 
