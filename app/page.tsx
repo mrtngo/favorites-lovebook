@@ -559,6 +559,7 @@ export default function Home() {
 
   const [myDisplayNameDraft, setMyDisplayNameDraft] = useState("");
   const [coupleNameDraft, setCoupleNameDraft] = useState("");
+  const [showCustomization, setShowCustomization] = useState(false);
 
   const currentCategoryEntries = favorites[activeCategory];
   const activeCategoryMeta = categoryMeta.find((item) => item.key === activeCategory);
@@ -824,6 +825,7 @@ export default function Home() {
       setMyDisplayNameDraft("");
       setCoupleNameDraft("");
       setSetupDisplayName("");
+      setShowCustomization(false);
     });
 
     return () => {
@@ -1008,6 +1010,7 @@ export default function Home() {
     setJoinCode("");
     setSetupDisplayName(trimmedDisplayName);
     setPairMessage(`Couple created. Share this code: ${freshCouple.inviteCode}`);
+    setShowCustomization(false);
     setPairBusy(false);
   };
 
@@ -1078,6 +1081,7 @@ export default function Home() {
     setJoinCode("");
     setSetupDisplayName(trimmedDisplayName);
     setPairMessage(`Joined ${linkedCouple.name}.`);
+    setShowCustomization(false);
     setPairBusy(false);
   };
 
@@ -1676,6 +1680,13 @@ export default function Home() {
               Space: {couple.name} · Code: <strong>{couple.inviteCode}</strong> · Viewing: {selectedUserLabel || "..."}
             </p>
             <div className="hero-buttons">
+              <button
+                className="link-btn"
+                type="button"
+                onClick={() => setShowCustomization((current) => !current)}
+              >
+                {showCustomization ? "Hide customization" : "Customize"}
+              </button>
               <button className="link-btn" type="button" onClick={copyInviteCode}>
                 Copy code
               </button>
@@ -1725,59 +1736,63 @@ export default function Home() {
           )}
         </header>
 
-        <article className="card names-card">
-          <h2>Names</h2>
-          <p className="help">Set your name and your shared space name.</p>
-          <form className="form names-form" onSubmit={saveNames}>
-            <label>
-              Your Name
-              <input
-                value={myDisplayNameDraft}
-                onChange={(event) => setMyDisplayNameDraft(event.target.value)}
-                placeholder="Your name"
-              />
-            </label>
-            <label>
-              Space Name
-              <input
-                value={coupleNameDraft}
-                onChange={(event) => setCoupleNameDraft(event.target.value)}
-                placeholder="Our space"
-              />
-            </label>
-            <button className="btn" type="submit" disabled={dataBusy}>
-              Save Names
-            </button>
-          </form>
-        </article>
-
-        <article className="card palette-card">
-          <h2>{viewingSelf ? "Palette" : "Palette Preview"}</h2>
-          <p className="help">Customize dashboard colors for this profile.</p>
-          <div className="palette-grid">
-            {paletteFieldMeta.map((field) => (
-              <label key={field.key} className="palette-field">
-                {field.label}
-                <div className="palette-input-wrap">
+        {showCustomization && (
+          <>
+            <article className="card names-card">
+              <h2>Names</h2>
+              <p className="help">Set your name and your shared space name.</p>
+              <form className="form names-form" onSubmit={saveNames}>
+                <label>
+                  Your Name
                   <input
-                    type="color"
-                    value={paletteDraft[field.key]}
-                    onChange={(event) => updatePaletteColor(field.key, event.target.value)}
-                    disabled={!viewingSelf}
+                    value={myDisplayNameDraft}
+                    onChange={(event) => setMyDisplayNameDraft(event.target.value)}
+                    placeholder="Your name"
                   />
-                  <span className="palette-code">{paletteDraft[field.key]}</span>
+                </label>
+                <label>
+                  Space Name
+                  <input
+                    value={coupleNameDraft}
+                    onChange={(event) => setCoupleNameDraft(event.target.value)}
+                    placeholder="Our space"
+                  />
+                </label>
+                <button className="btn" type="submit" disabled={dataBusy}>
+                  Save Names
+                </button>
+              </form>
+            </article>
+
+            <article className="card palette-card">
+              <h2>{viewingSelf ? "Palette" : "Palette Preview"}</h2>
+              <p className="help">Customize dashboard colors for this profile.</p>
+              <div className="palette-grid">
+                {paletteFieldMeta.map((field) => (
+                  <label key={field.key} className="palette-field">
+                    {field.label}
+                    <div className="palette-input-wrap">
+                      <input
+                        type="color"
+                        value={paletteDraft[field.key]}
+                        onChange={(event) => updatePaletteColor(field.key, event.target.value)}
+                        disabled={!viewingSelf}
+                      />
+                      <span className="palette-code">{paletteDraft[field.key]}</span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              {viewingSelf && (
+                <div className="notes-actions">
+                  <button className="btn" type="button" onClick={savePalette} disabled={dataBusy}>
+                    Save Palette
+                  </button>
                 </div>
-              </label>
-            ))}
-          </div>
-          {viewingSelf && (
-            <div className="notes-actions">
-              <button className="btn" type="button" onClick={savePalette} disabled={dataBusy}>
-                Save Palette
-              </button>
-            </div>
-          )}
-        </article>
+              )}
+            </article>
+          </>
+        )}
 
         <div className="grid">
           <article className="card">
