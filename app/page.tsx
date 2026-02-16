@@ -843,6 +843,19 @@ export default function Home() {
     });
   }, [couple?.id, selectedUserId, loadCoupleData]);
 
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const root = document.documentElement;
+    root.style.setProperty("--bg-a", palette.bgA);
+    root.style.setProperty("--bg-b", palette.bgB);
+    root.style.setProperty("--bg-c", palette.bgC);
+    root.style.setProperty("--accent", palette.accent);
+    root.style.setProperty("--accent-2", palette.accent2);
+  }, [palette]);
+
   const sortedDates = useMemo(() => {
     return [...importantDates].sort((a, b) => {
       return nextOccurrence(a).getTime() - nextOccurrence(b).getTime();
