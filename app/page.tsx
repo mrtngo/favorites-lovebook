@@ -258,6 +258,29 @@ function normalizeHexColor(value: string | null | undefined, fallback: string) {
   return /^#[0-9a-fA-F]{6}$/.test(normalized) ? normalized.toLowerCase() : fallback;
 }
 
+function hexToRgb(hex: string): [number, number, number] | null {
+  const match = /^#([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!match) {
+    return null;
+  }
+
+  const raw = match[1];
+  const r = Number.parseInt(raw.slice(0, 2), 16);
+  const g = Number.parseInt(raw.slice(2, 4), 16);
+  const b = Number.parseInt(raw.slice(4, 6), 16);
+  return [r, g, b];
+}
+
+function rgbaFromHex(hex: string, alpha: number, fallback: string) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) {
+    return fallback;
+  }
+
+  const [r, g, b] = rgb;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function normalizePaletteFromRow(row: UserNotesRow | null | undefined): DashboardPalette {
   return {
     bgA: normalizeHexColor(row?.palette_bg_a, DEFAULT_PALETTE.bgA),
@@ -856,6 +879,39 @@ export default function Home() {
     root.style.setProperty("--bg-c", palette.bgC);
     root.style.setProperty("--accent", palette.accent);
     root.style.setProperty("--accent-2", palette.accent2);
+    root.style.setProperty("--panel", rgbaFromHex(palette.bgA, 0.84, "rgba(16, 15, 33, 0.88)"));
+    root.style.setProperty(
+      "--panel-border",
+      rgbaFromHex(palette.accent2, 0.58, "rgba(255, 167, 196, 0.65)"),
+    );
+    root.style.setProperty(
+      "--card-bg",
+      rgbaFromHex(palette.bgC, 0.36, "rgba(255, 255, 255, 0.06)"),
+    );
+    root.style.setProperty(
+      "--card-border",
+      rgbaFromHex(palette.accent2, 0.25, "rgba(255, 255, 255, 0.17)"),
+    );
+    root.style.setProperty(
+      "--chip",
+      rgbaFromHex(palette.accent2, 0.14, "rgba(255, 202, 223, 0.14)"),
+    );
+    root.style.setProperty(
+      "--input-bg",
+      rgbaFromHex(palette.bgA, 0.56, "rgba(7, 9, 24, 0.55)"),
+    );
+    root.style.setProperty(
+      "--input-border",
+      rgbaFromHex(palette.accent2, 0.3, "rgba(255, 255, 255, 0.25)"),
+    );
+    root.style.setProperty(
+      "--focus-ring",
+      rgbaFromHex(palette.accent, 0.24, "rgba(255, 200, 111, 0.2)"),
+    );
+    root.style.setProperty(
+      "--muted",
+      rgbaFromHex(palette.accent2, 0.82, "rgba(255, 241, 232, 0.78)"),
+    );
   }, [palette]);
 
   const sortedDates = useMemo(() => {
